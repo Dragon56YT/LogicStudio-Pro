@@ -1,0 +1,8 @@
+{
+  "name": "Remix LogicStudio Pro",
+  "description": "Advanced circuit design simulator featuring 64-bit architecture, expansive components, and optimized trackpad support for complex system creation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
