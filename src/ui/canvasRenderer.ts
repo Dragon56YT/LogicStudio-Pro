@@ -175,23 +175,34 @@ export function getWireGeometry(
   x2: number,
   y2: number,
   wireStyle: WireStyle,
-  lane = 0
+  lane = 0,
+  curveOffset = 0,
+  waypoints?: Array<{ x: number; y: number }>
 ): WireGeometry {
+  if (waypoints && waypoints.length > 0 && wireStyle === 'orthogonal') {
+    const pts = [{ x: x1, y: y1 }, ...waypoints.map(p => ({ x: p.x, y: p.y })), { x: x2, y: y2 }];
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) {
+      cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    }
+    return { type: 'orthogonal', points: pts, cum };
+  }
   if (wireStyle === 'orthogonal') {
     const R = 22;
     let pts: Array<{ x: number; y: number }>;
     if (x2 - x1 >= R * 2) {
-      let mx = (x1 + x2) / 2 + lane;
-      mx = Math.max(x1 + R * 0.7, Math.min(x2 - R * 0.7, mx));
+      let mx = (x1 + x2) / 2 + lane + curveOffset;
+      mx = Math.max(x1 + R * 0.6, Math.min(x2 - R * 0.6, mx));
       pts =
-        Math.abs(y1 - y2) < 0.5
+        Math.abs(y1 - y2) < 0.5 && Math.abs(curveOffset) < 2
           ? [{ x: x1, y: y1 }, { x: x2, y: y2 }]
           : [{ x: x1, y: y1 }, { x: mx, y: y1 }, { x: mx, y: y2 }, { x: x2, y: y2 }];
     } else {
       const ox = x1 + R + Math.abs(lane) * 0.4;
       const ix = x2 - R - Math.abs(lane) * 0.4;
-      const ym = Math.abs(y2 - y1) < 70 ? Math.max(y1, y2) + 48 + Math.abs(lane) : (y1 + y2) / 2 + lane;
-      pts = [{ x: x1, y: y1 }, { x: ox, y: y1 }, { x: ox, y: ym }, { x: ix, y: ym }, { x: ix, y: y2 }, { x: x2, y: y2 }];
+      const baseYm = Math.abs(y2 - y1) < 70 ? Math.max(y1, y2) + 48 + Math.abs(lane) : (y1 + y2) / 2 + lane;
+      const ym = baseYm + curveOffset;
+      pts = [{ x: x1, y: y1 }, { x: ox, y: y1 }, { x: x1 < ox ? ox : ox, y: ym }, { x: ix, y: ym }, { x: ix, y: y2 }, { x: x2, y: y2 }];
     }
     const cum = [0];
     for (let i = 1; i < pts.length; i++) {
@@ -200,13 +211,30 @@ export function getWireGeometry(
     return { type: 'orthogonal', points: pts, cum };
   }
   const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
+  const arch = curveOffset * 1.333;
   return {
     type: 'bezier',
     p0: { x: x1, y: y1 },
-    p1: { x: x1 + dx, y: y1 },
-    p2: { x: x2 - dx, y: y2 },
+    p1: { x: x1 + dx, y: y1 + arch },
+    p2: { x: x2 - dx, y: y2 + arch },
     p3: { x: x2, y: y2 }
   };
+}
+
+export function getWireControlHandle(geom: WireGeometry): { x: number; y: number; axis: 'x' | 'y' } {
+  if (geom.type === 'orthogonal') {
+    const pts = geom.points;
+    if (pts.length >= 6) {
+      return { x: (pts[2].x + pts[3].x) / 2, y: pts[2].y, axis: 'y' };
+    }
+    if (pts.length >= 4) {
+      return { x: pts[1].x, y: (pts[1].y + pts[2].y) / 2, axis: 'x' };
+    }
+    const mid = evalPointOnWire(geom, 0.5);
+    return { x: mid.x, y: mid.y, axis: 'x' };
+  }
+  const mid = evalPointOnWire(geom, 0.5);
+  return { x: mid.x, y: mid.y, axis: 'y' };
 }
 
 export function evalPointOnWire(geom: WireGeometry, t: number): { x: number; y: number } {
@@ -305,7 +333,7 @@ export function drawWires(
   }
 
   const groups = new Map<string, WireGroup>();
-  const special: Array<{ geom: WireGeometry; col: string; sel: boolean; bus: boolean }> = [];
+  const special: Array<{ wire: Wire; geom: WireGeometry; col: string; sel: boolean; bus: boolean }> = [];
   const particles: WireGeometry[] = [];
   const dots = new Map<string, { x: number; y: number; col: string }>();
   const busLabels: Array<{ x: number; y: number; width: number; col: string; alpha: number }> = [];
@@ -341,7 +369,9 @@ export function drawWires(
       pinWX(cTo, pTo),
       pinWY(cTo, pTo),
       st.wireStyle,
-      wireLane(cFrom, pFrom.id, compIdx.get(cFrom.id) || 0, st.wireStyle)
+      wireLane(cFrom, pFrom.id, compIdx.get(cFrom.id) || 0, st.wireStyle),
+      w.curveOffset || 0,
+      w.waypoints
     );
     const b = geomBounds(geom);
     if (b.x1 < vis.x0 || b.x0 > vis.x1 || b.y1 < vis.y0 || b.y0 > vis.y1) continue;
@@ -350,7 +380,8 @@ export function drawWires(
     const isSelected = st.selectedWireId === w.id;
     const isHovered = st.hoveredWire?.id === w.id || (hoverNetKey !== null && hoverNetKey === netKey);
     const touchesSelected = st.selectedIds.has(cFrom.id) || st.selectedIds.has(cTo.id);
-    const col = getSignalColor(st.theme, w.signal, w.unstable);
+    const baseSigCol = getSignalColor(st.theme, w.signal, w.unstable);
+    const col = w.customColor && !w.unstable && w.signal !== 'ERR' ? (isSignalNonZero(w.signal) ? w.customColor : CANVAS_THEMES[st.theme].sig0) : baseSigCol;
     const on = isSignalNonZero(w.signal);
     const busW = Math.max(pFrom.width || 1, pTo.width || 1, w.width || 1);
     const isBus = busW > 1;
@@ -391,7 +422,7 @@ export function drawWires(
     }
 
     if (isSelected || isHovered) {
-      special.push({ geom, col, sel: isSelected, bus: isBus });
+      special.push({ wire: w, geom, col, sel: isSelected, bus: isBus });
     } else {
       const key = `${on ? '1' : '0'}|${isBus ? 'B' : 'S'}|${wireAlpha}|${col}`;
       let g = groups.get(key);
@@ -479,6 +510,26 @@ export function drawWires(
     ctx.lineWidth = s.sel ? (s.bus ? 5 : 4) : (s.bus ? 4.4 : 3.5);
     ctx.strokeStyle = s.sel ? '#ffffff' : s.col;
     ctx.stroke(p);
+
+    // Draw articulated drag handle when selected or directly hovered
+    if ((s.sel || st.hoveredWire?.id === s.wire.id) && st.view.zoom >= 0.4) {
+      const h = getWireControlHandle(s.geom);
+      const r = s.sel ? 6.5 : 5;
+      ctx.save();
+      ctx.translate(h.x, h.y);
+      ctx.beginPath();
+      ctx.moveTo(0, -r);
+      ctx.lineTo(r, 0);
+      ctx.lineTo(0, r);
+      ctx.lineTo(-r, 0);
+      ctx.closePath();
+      ctx.fillStyle = s.sel ? '#ffffff' : s.col;
+      ctx.fill();
+      ctx.strokeStyle = CANVAS_THEMES[st.theme].compFill;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   if (dots.size) {
@@ -1113,7 +1164,7 @@ export function drawComponent(
       drawBtn(-42, -1, 'A', (g & 4) !== 0);
       drawBtn(-18, -1, 'S', (g & 2) !== 0);
       drawBtn(6, -1, 'D', (g & 8) !== 0);
-      drawBtn(-18, 22, 'FIRE', (g & 16) !== 0, 54, 18);
+      drawBtn(-18, 22, 'FIRE (E/J)', (g & 16) !== 0, 62, 18);
       break;
     }
 
@@ -1442,14 +1493,9 @@ export function drawComponent(
       if (surf && front && front.length === vw * vh) {
         const curVer = st.vgaVersion ?? 0;
         if (vgaLastCompId !== comp.id || vgaLastVer !== curVer) {
-          const d = surf.img.data;
+          const u32 = new Uint32Array(surf.img.data.buffer);
           for (let i = 0; i < vw * vh; i++) {
-            const c = front[i];
-            const p = i * 4;
-            d[p] = ((c >> 5) & 7) * 36;
-            d[p + 1] = ((c >> 2) & 7) * 36;
-            d[p + 2] = (c & 3) * 85;
-            d[p + 3] = 255;
+            u32[i] = RGB332_ABGR[front[i]];
           }
           surf.ctx.putImageData(surf.img, 0, 0);
           vgaLastCompId = comp.id;
@@ -2438,4 +2484,94 @@ export function drawPinTooltip(ctx: CanvasRenderingContext2D, st: RenderStateVie
   ctx.textBaseline = 'middle';
   ctx.fillText(text, bx + boxW / 2, by + boxH / 2);
   ctx.restore();
+}
+
+// Precomputed RGB332 -> little-endian ABGR 32-bit table for instant ImageData blits
+const RGB332_ABGR = (() => {
+  const lut = new Uint32Array(256);
+  for (let c = 0; c < 256; c++) {
+    const r = ((c >> 5) & 7) * 36;
+    const g = ((c >> 2) & 7) * 36;
+    const b = (c & 3) * 85;
+    lut[c] = (255 << 24) | (b << 16) | (g << 8) | r;
+  }
+  return lut;
+})();
+
+export function drawComponentGroups(ctx: CanvasRenderingContext2D, st: RenderStateView): void {
+  const groups = new Map<
+    string,
+    { id: string; name: string; colorKey: string; minX: number; minY: number; maxX: number; maxY: number; count: number; allSelected: boolean }
+  >();
+  for (const c of st.components) {
+    if (!c.groupId) continue;
+    const odd = (c.rot || 0) % 2 === 1;
+    const hw = (odd ? c.h : c.w) / 2;
+    const hh = (odd ? c.w : c.h) / 2;
+    const g = groups.get(c.groupId);
+    const isSel = st.selectedIds.has(c.id);
+    if (!g) {
+      groups.set(c.groupId, {
+        id: c.groupId,
+        name: c.groupName || 'Grupo',
+        colorKey: c.groupColor || 'cyan',
+        minX: c.x - hw,
+        minY: c.y - hh,
+        maxX: c.x + hw,
+        maxY: c.y + hh,
+        count: 1,
+        allSelected: isSel
+      });
+    } else {
+      g.minX = Math.min(g.minX, c.x - hw);
+      g.minY = Math.min(g.minY, c.y - hh);
+      g.maxX = Math.max(g.maxX, c.x + hw);
+      g.maxY = Math.max(g.maxY, c.y + hh);
+      g.count++;
+      if (!isSel) g.allSelected = false;
+    }
+  }
+  if (groups.size === 0) return;
+
+  for (const g of groups.values()) {
+    const hex = (LED_PALETTE[g.colorKey]?.hex) || (g.colorKey.startsWith('#') ? g.colorKey : '#00f5d4');
+    const padX = 24;
+    const padTop = 30;
+    const padBot = 20;
+    const rx = g.minX - padX;
+    const ry = g.minY - padTop;
+    const rw = g.maxX - g.minX + padX * 2;
+    const rh = g.maxY - g.minY + padTop + padBot;
+
+    ctx.save();
+    roundRectPath(ctx, rx, ry, rw, rh, 14);
+    ctx.fillStyle = hex;
+    ctx.globalAlpha = g.allSelected ? 0.11 : 0.06;
+    ctx.fill();
+
+    ctx.globalAlpha = g.allSelected ? 0.85 : 0.48;
+    ctx.strokeStyle = hex;
+    ctx.lineWidth = g.allSelected ? 2 : 1.3;
+    ctx.setLineDash([7, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (st.view.zoom >= 0.35) {
+      const lbl = `${g.name} (${g.count})`;
+      ctx.font = '800 10.5px system-ui, sans-serif';
+      const bw = Math.max(54, ctx.measureText(lbl).width + 16);
+      roundRectPath(ctx, rx + 8, ry - 11, bw, 20, 7);
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = CANVAS_THEMES[st.theme].compFill;
+      ctx.fill();
+      ctx.strokeStyle = hex;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = hex;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(lbl, rx + 8 + bw / 2, ry - 1);
+    }
+    ctx.restore();
+  }
 }

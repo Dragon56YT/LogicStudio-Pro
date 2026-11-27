@@ -144,30 +144,31 @@ body {
    3. CABECERA SUPERIOR (TOOLBAR DE INGENIERÍA)
    ========================================================================= */
 .topbar {
-  height: 46px;
-  min-height: 46px;
+  height: 44px;
+  min-height: 44px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 6px;
-  gap: 4px;
+  gap: 3px;
   z-index: 30;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .topbar-group {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   flex-shrink: 0;
 }
 
 .divider-v {
   width: 1px;
-  height: 20px;
+  height: 18px;
   background: var(--border-subtle);
   margin: 0 1px;
   flex-shrink: 0;
@@ -176,8 +177,8 @@ body {
 .brand-box {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding-right: 2px;
+  gap: 5px;
+  padding-right: 1px;
 }
 
 .brand-logo {
@@ -239,9 +240,9 @@ body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  height: 26px;
-  padding: 0 6px;
-  border-radius: 7px;
+  height: 25px;
+  padding: 0 5px;
+  border-radius: 6px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-elevated);
   color: var(--text-primary);
@@ -269,7 +270,7 @@ body {
 }
 
 .btn-icon {
-  width: 26px;
+  width: 24px;
   padding: 0;
 }
 
@@ -303,9 +304,9 @@ body {
 }
 
 .select-control, .input-control {
-  height: 26px;
-  padding: 0 5px;
-  border-radius: 7px;
+  height: 25px;
+  padding: 0 4px;
+  border-radius: 6px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-input);
   color: var(--text-primary);
@@ -321,19 +322,38 @@ body {
 .clock-pill {
   display: flex;
   align-items: center;
-  gap: 3px;
-  height: 26px;
-  padding: 0 5px;
-  border-radius: 7px;
+  gap: 2px;
+  height: 25px;
+  padding: 0 4px;
+  border-radius: 6px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-input);
   font-size: 10.5px;
 }
 
 .clock-pill input[type="range"] {
-  width: 34px;
+  width: 28px;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+@media (max-width: 1350px) {
+  #wire-style-label,
+  #wire-vis-label,
+  #btn-toggle-analyzer span,
+  .brand-credit {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .topbar {
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    padding: 4px 6px;
+    overflow-x: visible;
+  }
 }
 
 /* =========================================================================
@@ -1459,4 +1479,289 @@ body.reduce-anim *::after {
   animation: none !important;
   transition: none !important;
 }
+
+/* =========================================================================
+   8. BETA 0.4: APRENDIZAJE DESDE 0, PROGRAMADOR VISUAL, TOP BAR & GRUPOS
+   ========================================================================= */
+body.challenge-active .floating-help {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chal-hint-box {
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  font-size: 11.5px;
+  color: var(--text-primary);
+}
+
+.mem-tabs {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 8px;
+}
+.mem-tab {
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mem-tab.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mem-panel.hidden {
+  display: none;
+}
+
+.doom-tile-palette {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.doom-brush-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.doom-brush-btn.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.doom-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.45);
+}
+.doom-map-grid {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 2px;
+  background: #020617;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  user-select: none;
+}
+.doom-tile {
+  aspect-ratio: 1;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 3px;
+  color: #fff;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: crosshair;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.doom-tile.selected {
+  outline: 2px solid #ffffff;
+  z-index: 2;
+}
+.doom-tile.reading {
+  box-shadow: 0 0 0 2px #f59e0b inset;
+}
+
+.music-note-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.music-note-btn {
+  height: 26px;
+  font-size: 11px;
+  padding: 0 8px;
+}
+.music-step-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.music-step-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.music-step-row.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.music-step-row.reading {
+  box-shadow: 0 0 0 1px var(--warn) inset;
+}
+
+.mem-guide-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.mem-guide-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.mem-guide-card {
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+.mem-guide-card strong {
+  display: block;
+  color: var(--accent);
+  font-size: 11.5px;
+  margin-bottom: 3px;
+}
+.mem-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+}
+
+/* Learning Mode Modal */
+.learn-layout {
+  display: grid;
+  grid-template-columns: 235px 1fr;
+  gap: 12px;
+  min-height: 360px;
+}
+.learn-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 410px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.learn-step-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: 9px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 11.5px;
+}
+.learn-step-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+.learn-step-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.learn-step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  font-size: 10.5px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.learn-step-btn.done .learn-step-num {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.learn-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+.learn-theory {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.learn-goal-box {
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+}
+.learn-tip-box {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.11);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.learn-status-banner {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.learn-status-banner.ok {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+.learn-status-banner.bad {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+@media (max-width: 720px) {
+  .learn-layout { grid-template-columns: 1fr; }
+  .mem-guide-cards, .mem-guide-grid, .music-step-list { grid-template-columns: 1fr; }
+}
+
 

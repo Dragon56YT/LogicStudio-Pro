@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createComponent } from './catalog';
-import { compileLogicScript, formatLogicScriptDiagnosticsForAI } from './logicscript';
+import { compileLogicScript, formatLogicScriptDiagnosticsForAI, generateLogicScriptAIPrompt } from './logicscript';
 import { evaluateCircuitDeterministic, solveNetwork } from './simulator';
-import { deserializeCircuitData, serializeCircuitData, toUintN } from './types';
+import { deserializeCircuitData, exportLsProData, parseCircuitImport, serializeCircuitData, toUintN } from './types';
 import { PRESET_LIST, buildPresetCircuit } from '../presets/circuits';
 import { FUNNY_SCENES_32, renderFunnyScene32Buffer } from '../presets/funnyAnimation32';
 import { synthesizeBooleanCircuit, computeTruthTable } from './booleanSynth';
 import { CHALLENGES, validateChallenge } from './challenges';
+import { LEARNING_LESSONS } from './lessons';
+import { decodeMusicWord, disassembleRisc16, encodeMusicWord } from '../ui/memProgrammer';
 import { exportCircuitToLogisimCirc } from './logisimExport';
 
 test('64-bit ALU_N and ADDER_N exact BigInt arithmetic', () => {
@@ -980,5 +982,153 @@ test('LogicScript v2: macro/call, let arithmetic, nested for, pin ranges, ASCII/
   assert.ok(aiMsg.includes('ANND'));
   assert.ok(aiMsg.includes('```logicscript'));
 });
+
+test('Beta 0.4: Native .lspro file format roundtrip preserves BigInt, groups, and articulated wires', () => {
+  const c1 = createComponent('CONST_N', -100, 0, {
+    bits: 64,
+    initialValue: 0xDEAD_BEEF_CAFE_BABEn,
+    groupId: 'grp_1',
+    groupName: 'Bloque ALU',
+    groupColor: '#38bdf8'
+  });
+  const c2 = createComponent('LED_BAR_8', 100, 0, {
+    bits: 8,
+    groupId: 'grp_1',
+    groupName: 'Bloque ALU',
+    groupColor: '#38bdf8'
+  });
+  const wire = {
+    id: 'w_art',
+    fromCompId: c1.id,
+    fromPinId: 'out',
+    toCompId: c2.id,
+    toPinId: 'd',
+    signal: 0,
+    width: 64,
+    curveOffset: 45,
+    customColor: '#f59e0b'
+  };
+
+  const lsproText = exportLsProData({ components: [c1, c2], wires: [wire], customICs: [] });
+  const parsed = parseCircuitImport(lsproText);
+  assert.equal(parsed.format, 'lspro');
+  assert.equal(parsed.version, '0.4');
+  assert.equal(parsed.components[0].internalState.value, 0xDEAD_BEEF_CAFE_BABEn);
+  assert.equal(parsed.components[0].groupId, 'grp_1');
+  assert.equal(parsed.components[0].groupName, 'Bloque ALU');
+  assert.equal(parsed.wires[0].curveOffset, 45);
+  assert.equal(parsed.wires[0].customColor, '#f59e0b');
+
+  // Legacy JSON import compatibility
+  const legacyText = serializeCircuitData({ app: 'LogicStudio Pro Beta 0.3', components: [c1], wires: [] });
+  const legacyParsed = parseCircuitImport(legacyText);
+  assert.equal(legacyParsed.format, 'json');
+  assert.equal(legacyParsed.components.length, 1);
+});
+
+test('Beta 0.4: LogicScript arbitrary bits=6, endfor, SPLITTER 1-bit expansion, groups, and cascade suppression', () => {
+  const script = `
+    place c48 = CONST_N bits=6 val=48 group="Scan"
+    place spl = SPLITTER bits=6 split=1bit group="Scan"
+    connect c48.out -> spl.bus
+    for i in 0..1
+      place led_{i} = LED label="B{i}" group="LEDs"
+      connect spl.p{i} -> led_{i}.in0
+    endfor
+  `;
+  const ok = compileLogicScript(script);
+  assert.equal(ok.errors.length, 0, `Unexpected LogicScript errors: ${JSON.stringify(ok.errors)}`);
+  assert.equal(ok.components!.length, 4);
+  const c48 = ok.components!.find(c => c.bits === 6)!;
+  assert.ok(c48);
+  assert.equal(c48.groupName, 'Scan');
+  solveNetwork(ok.components!, ok.wireList!, false);
+  const led0 = ok.components!.find(c => c.label === 'B0')!;
+  assert.equal(led0.pinValues.in0, 0);
+
+  // Cascade suppression: failed `place x_cnt` should not produce bogus unknown-alias errors on `connect` lines
+  const bad = compileLogicScript(`
+    place x_cnt = NONEXISTENT_CHIP bits=6
+    connect x_cnt.q -> x_cnt.d
+    connect x_cnt.co -> x_cnt.en
+  `);
+  assert.equal(bad.errors.length, 1);
+  assert.equal(bad.errors[0].line, 2);
+
+  // AI prompt contains Beta 0.4 rules
+  const prompt = generateLogicScriptAIPrompt();
+  assert.ok(prompt.includes('Beta 0.4'));
+  assert.ok(prompt.includes('endfor'));
+  assert.ok(prompt.includes('ANIM32_GPU'));
+});
+
+test('Beta 0.4: Learning lessons (1..10) starters and completion checks work', () => {
+  assert.equal(LEARNING_LESSONS.length, 10);
+  for (const lesson of LEARNING_LESSONS) {
+    const starter = lesson.buildStarter();
+    assert.ok(starter.components.length >= 2, `Lesson ${lesson.id} should have starter components`);
+    evaluateCircuitDeterministic(starter.components, starter.wires, 0);
+    const res = lesson.check(starter.components, starter.wires);
+    assert.equal(typeof res.ok, 'boolean');
+    assert.ok(res.feedback.length > 0);
+  }
+
+  // Solve Lesson 1 (Bits)
+  const l1 = LEARNING_LESSONS[0];
+  const st1 = l1.buildStarter();
+  const sw = st1.components.find(c => c.type === 'SWITCH')!;
+  const led = st1.components.find(c => c.type === 'LED')!;
+  sw.internalState.value = 1;
+  const w1 = [{ id: 'wl1', fromCompId: sw.id, fromPinId: 'out', toCompId: led.id, toPinId: 'in0', signal: 0 }];
+  evaluateCircuitDeterministic(st1.components, w1, 0);
+  assert.equal(l1.check(st1.components, w1).ok, true);
+});
+
+test('Beta 0.4: New challenges have hints and valid validators (lt2, demux4, sq_dlatch)', () => {
+  for (const ch of CHALLENGES) {
+    assert.ok(ch.hint && ch.hint.length > 5, `Challenge ${ch.id} missing hint`);
+  }
+  const lt2 = CHALLENGES.find(c => c.id === 'lt2')!;
+  assert.ok(lt2);
+  const a1 = createComponent('SWITCH', 0, 0, { label: 'A1' });
+  const a0 = createComponent('SWITCH', 0, 40, { label: 'A0' });
+  const b1 = createComponent('SWITCH', 0, 80, { label: 'B1' });
+  const b0 = createComponent('SWITCH', 0, 120, { label: 'B0' });
+  const cmp = createComponent('COMP_2', 140, 60);
+  const ledL = createComponent('LED', 260, 60, { label: 'L' });
+  const res = validateChallenge(lt2, [a1, a0, b1, b0, cmp, ledL], [
+    { id: 'w1', fromCompId: a1.id, fromPinId: 'out', toCompId: cmp.id, toPinId: 'a1', signal: 0 },
+    { id: 'w2', fromCompId: a0.id, fromPinId: 'out', toCompId: cmp.id, toPinId: 'a0', signal: 0 },
+    { id: 'w3', fromCompId: b1.id, fromPinId: 'out', toCompId: cmp.id, toPinId: 'b1', signal: 0 },
+    { id: 'w4', fromCompId: b0.id, fromPinId: 'out', toCompId: cmp.id, toPinId: 'b0', signal: 0 },
+    { id: 'w5', fromCompId: cmp.id, fromPinId: 'lt', toCompId: ledL.id, toPinId: 'in0', signal: 0 }
+  ]);
+  assert.equal(res.ok, true);
+
+  const dlatchChal = CHALLENGES.find(c => c.id === 'sq_dlatch')!;
+  const swD = createComponent('SWITCH', 0, 0, { label: 'D' });
+  const swEn = createComponent('SWITCH', 0, 40, { label: 'EN' });
+  const dl = createComponent('LATCH_D', 120, 20);
+  const ledQ = createComponent('LED', 220, 20, { label: 'Q' });
+  const dlRes = validateChallenge(dlatchChal, [swD, swEn, dl, ledQ], [
+    { id: 'wd1', fromCompId: swD.id, fromPinId: 'out', toCompId: dl.id, toPinId: 'd', signal: 0 },
+    { id: 'wd2', fromCompId: swEn.id, fromPinId: 'out', toCompId: dl.id, toPinId: 'en', signal: 0 },
+    { id: 'wd3', fromCompId: dl.id, fromPinId: 'q', toCompId: ledQ.id, toPinId: 'in0', signal: 0 }
+  ]);
+  assert.equal(dlRes.ok, true);
+});
+
+test('Beta 0.4: Music score word encoder/decoder and RISC-16 disassembler work accurately', () => {
+  const word = encodeMusicWord(440, 2, 1);
+  const dec = decodeMusicWord(word);
+  assert.equal(dec.freq, 440);
+  assert.equal(dec.wave, 2);
+  assert.equal(dec.gate, 1);
+
+  assert.equal(disassembleRisc16(0x1434), 'LDI R2, 0x34');
+  assert.equal(disassembleRisc16(0x2240), 'ADD R1, R1, #0');
+  assert.equal(disassembleRisc16(0xF000), 'HALT');
+});
+
 
 

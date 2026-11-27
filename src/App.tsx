@@ -12,7 +12,7 @@ export default function App() {
       <header className="topbar">
         <div className="topbar-group">
           <div className="brand-box">
-            <div className="brand-logo" title="LogicStudio Pro Beta 0.3">
+            <div className="brand-logo" title="LogicStudio Pro Beta 0.4">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 6h6a6 6 0 0 1 0 12H4z" />
                 <path d="M2 9h2M2 15h2M16 12h6" />
@@ -21,7 +21,7 @@ export default function App() {
             <div className="brand-title-wrap">
               <div className="brand-title-row">
                 <span className="brand-name">LogicStudio</span>
-                <span className="beta-badge">0.3</span>
+                <span className="beta-badge">0.4</span>
               </div>
               <span className="brand-credit">A. Arbós • 1–64b</span>
             </div>
@@ -29,7 +29,7 @@ export default function App() {
 
           <div className="divider-v" />
 
-          <select id="preset-selector" className="select-control" style={{ maxWidth: 136 }} aria-label="Cargar circuito de ejemplo precargado" title="Cargar circuito de ejemplo precargado">
+          <select id="preset-selector" className="select-control" style={{ maxWidth: 112 }} aria-label="Cargar circuito de ejemplo precargado" title="Cargar circuito de ejemplo precargado">
             <option value="demo">1. Demo Bienvenida + LED RGB</option>
           </select>
         </div>
@@ -53,10 +53,10 @@ export default function App() {
 
           <div className="clock-pill" title="Frecuencia global del reloj del sistema">
             <input id="global-clock-hz" type="range" min="0.5" max="15" step="0.5" defaultValue="2" aria-label="Frecuencia de reloj" />
-            <span id="global-clock-label" className="mono" style={{ fontWeight: 700, minWidth: 33 }}>2.0Hz</span>
+            <span id="global-clock-label" className="mono" style={{ fontWeight: 700, minWidth: 30 }}>2.0Hz</span>
           </div>
 
-          <select id="clock-mult-selector" className="select-control mono" style={{ width: 52 }} defaultValue="1" aria-label="Multiplicador de ciclos de reloj" title="Multiplicador de ciclos de simulación (TURBO para VGA / DOOM 3D)">
+          <select id="clock-mult-selector" className="select-control mono" style={{ width: 46 }} defaultValue="1" aria-label="Multiplicador de ciclos de reloj" title="Multiplicador de ciclos de simulación (TURBO para VGA / DOOM 3D)">
             <option value="1">×1</option>
             <option value="10">×10</option>
             <option value="100">×100</option>
@@ -84,7 +84,7 @@ export default function App() {
             </svg>
           </button>
 
-          <select id="theme-selector" className="select-control" style={{ maxWidth: 82 }} defaultValue="cyber" aria-label="Tema visual del estudio" title="Cambiar tema visual del estudio">
+          <select id="theme-selector" className="select-control" style={{ maxWidth: 70 }} defaultValue="cyber" aria-label="Tema visual del estudio" title="Cambiar tema visual del estudio">
             <option value="cyber">Cyber Dark</option>
             <option value="blueprint">Blueprint</option>
             <option value="clean">Clean Lab</option>
@@ -147,7 +147,9 @@ export default function App() {
             <span className="mono">⌘K</span>
           </button>
 
-          <button id="btn-save-json" className="btn btn-icon" aria-label="Descargar JSON" title="Descargar circuito en JSON">
+          <button id="btn-group" className="btn" title="Agrupar / Desagrupar componentes seleccionados (Ctrl+G)">⊞ Grupo</button>
+
+          <button id="btn-save-json" className="btn btn-icon" aria-label="Guardar .lspro" title="Guardar proyecto en formato nativo .lspro (Ctrl+S)">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
@@ -155,14 +157,14 @@ export default function App() {
             </svg>
           </button>
 
-          <button id="btn-load-json" className="btn btn-icon" aria-label="Abrir JSON" title="Abrir archivo de circuito JSON">
+          <button id="btn-load-json" className="btn btn-icon" aria-label="Abrir circuito" title="Abrir archivo de circuito (.lspro o .json)">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
           </button>
-          <input id="file-json-input" type="file" accept=".json" className="hidden" />
+          <input id="file-json-input" type="file" accept=".lspro,.json" className="hidden" />
 
           <button id="btn-export-png" className="btn btn-icon" aria-label="Exportar PNG" title="Exportar captura de imagen PNG">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -181,6 +183,7 @@ export default function App() {
           </button>
 
           <button id="btn-script" className="btn" title="LogicScript: construye circuitos de hasta 64 bits con código o IA">&lt;/&gt; Script</button>
+          <button id="btn-learn" className="btn" title="Modo Aprendizaje paso a paso desde 0">🎓 Aprender</button>
           <button id="btn-challenges" className="btn" title="Modo ejercicios: retos con validación automática">🎯 Retos</button>
           <button id="btn-settings" className="btn btn-icon" aria-label="Ajustes" title="Ajustes">⚙</button>
           <button id="btn-shortcuts" className="btn btn-icon" aria-label="Atajos de teclado" title="Atajos de teclado (?)">⌨</button>
@@ -345,7 +348,7 @@ export default function App() {
         </div>
         <div className="status-group">
           <span>
-            LogicStudio Pro <strong>Beta 0.3</strong> • Desarrollado por <strong>Alejandro Arbós Gómez</strong>
+            LogicStudio Pro <strong>Beta 0.4</strong> • Desarrollado por <strong>Alejandro Arbós Gómez</strong>
           </span>
         </div>
       </footer>
@@ -468,7 +471,7 @@ export default function App() {
               <button type="button" id="script-tab-ls" className="script-tab active">&lt;/&gt; LogicScript (Circuito actual)</button>
               <button type="button" id="script-tab-circ" className="script-tab">⬡ Logisim-evolution (.circ)</button>
               <span style={{ flex: 1 }} />
-              <button id="script-copy-prompt" className="btn btn-accent" title="Copia un prompt maestro Beta 0.3 con todos los chips de 1–64 bits para cualquier IA">🤖 Copiar prompt IA</button>
+              <button id="script-copy-prompt" className="btn btn-accent" title="Copia un prompt maestro Beta 0.4 con todos los chips de 1–64 bits y reglas anti-error para cualquier IA">🤖 Copiar prompt IA</button>
             </div>
 
             <div id="script-panel-ls" className="script-panel">
@@ -536,75 +539,145 @@ for i in 0..7 ... end  # Soporta bucles anidados y aritmética {i*2+1}`}</pre>
         </div>
       </div>
 
-      {/* Modal: Editor Hexadecimal y Programador de Memoria RAM / ROM */}
+      {/* Modal: Editor Visual y Programador de Memoria RAM / ROM */}
       <div id="mem-modal" className="modal-backdrop hidden">
-        <div className="modal-card wide" style={{ maxWidth: 860 }}>
+        <div className="modal-card wide" style={{ maxWidth: 880 }}>
           <div className="modal-header">
             <div className="modal-title">
-              <span id="mem-modal-title">Programador Hexadecimal RAM / ROM</span>
+              <span id="mem-modal-title">Programador Visual RAM / ROM</span>
             </div>
             <button className="btn btn-icon modal-close" aria-label="Cerrar editor de memoria" data-modal="mem-modal">✕</button>
           </div>
           <div className="modal-body">
-            <div className="mem-toolbar-row">
-              <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
-                <button id="mem-page-prev" className="btn">← Ant.</button>
-                <span id="mem-page-info" className="mono mem-page-pill">0x00–0x3F</span>
-                <button id="mem-page-next" className="btn">Sig. →</button>
-                <select id="mem-page-size" className="select-control mono" aria-label="Celdas por página" title="Celdas por página">
-                  <option value="64">64/pág</option>
-                  <option value="128">128/pág</option>
-                  <option value="256">256/pág</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
-                <input id="mem-jump-addr" type="text" className="input-control mono" style={{ width: 68 }} placeholder="0x00" aria-label="Ir a dirección hexadecimal" />
-                <button id="mem-jump-btn" className="btn">Ir Addr</button>
-                <input id="mem-search-input" type="text" className="input-control mono" style={{ width: 126 }} placeholder="Buscar hex/ASCII" aria-label="Buscar valor o texto en memoria" />
-                <button id="mem-search-btn" className="btn">Buscar</button>
-              </div>
+            <div className="mem-tabs">
+              <button type="button" className="mem-tab active" data-memtab="hex">🔢 Editor Hex / ASCII</button>
+              <button type="button" className="mem-tab" data-memtab="doom">🧱 Mapa DOOM 16×16</button>
+              <button type="button" className="mem-tab" data-memtab="music">🎵 Partitura TONE_GEN</button>
+              <button type="button" className="mem-tab" data-memtab="guide">📘 Guía desde 0 &amp; RISC-16</button>
             </div>
 
             <div id="mem-live-info" className="mem-live-info mono">
               Lectura actual: 0x00 • Última escritura: — • Capacidad: 256 × 8b
             </div>
 
-            <div className="mem-toolbar-row">
-              <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
-                <select id="mem-pattern-select" className="select-control" aria-label="Patrón de llenado de memoria">
-                  <option value="zero">0x00 (Limpiar todo)</option>
-                  <option value="ff">0xFF / Máx (Todo 1s)</option>
-                  <option value="ramp">0, 1, 2… (Rampa lineal)</option>
-                  <option value="fib">Fibonacci modular</option>
-                  <option value="checker">Alterno 0xA5 / 0x5A</option>
-                  <option value="random">Aleatorio pseudo-PRNG</option>
-                  <option value="invert">Invertir bits (~Mem)</option>
-                  <option value="doom">Mapa Dungeon DOOM 16×16</option>
-                </select>
-                <button id="mem-apply-pattern" className="btn btn-accent">Aplicar Patrón</button>
+            <div id="mem-panel-hex" className="mem-panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="mem-toolbar-row">
+                <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button id="mem-page-prev" className="btn">← Ant.</button>
+                  <span id="mem-page-info" className="mono mem-page-pill">0x00–0x3F</span>
+                  <button id="mem-page-next" className="btn">Sig. →</button>
+                  <select id="mem-page-size" className="select-control mono" aria-label="Celdas por página" title="Celdas por página">
+                    <option value="64">64/pág</option>
+                    <option value="128">128/pág</option>
+                    <option value="256">256/pág</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input id="mem-jump-addr" type="text" className="input-control mono" style={{ width: 68 }} placeholder="0x00" aria-label="Ir a dirección hexadecimal" />
+                  <button id="mem-jump-btn" className="btn">Ir Addr</button>
+                  <input id="mem-search-input" type="text" className="input-control mono" style={{ width: 126 }} placeholder="Buscar hex/ASCII" aria-label="Buscar valor o texto en memoria" />
+                  <button id="mem-search-btn" className="btn">Buscar</button>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                <button id="mem-import-hex-btn" className="btn" title="Importar archivo .hex, .txt o .csv">📂 Importar</button>
-                <input id="mem-import-file" type="file" accept=".hex,.txt,.csv" className="hidden" />
-                <button id="mem-export-hex" className="btn">💾 .hex</button>
-                <button id="mem-export-csv" className="btn">📊 .csv</button>
-                <button id="mem-copy-hex" className="btn">📋 Hex</button>
-                <button id="mem-copy-ls" className="btn" title="Copiar línea mem= para LogicScript">📋 mem=</button>
+
+              <div className="mem-toolbar-row">
+                <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select id="mem-pattern-select" className="select-control" aria-label="Patrón de llenado de memoria">
+                    <option value="zero">0x00 (Limpiar todo)</option>
+                    <option value="ff">0xFF / Máx (Todo 1s)</option>
+                    <option value="ramp">0, 1, 2… (Rampa lineal)</option>
+                    <option value="fib">Fibonacci modular</option>
+                    <option value="checker">Alterno 0xA5 / 0x5A</option>
+                    <option value="random">Aleatorio pseudo-PRNG</option>
+                    <option value="invert">Invertir bits (~Mem)</option>
+                    <option value="doom">Mapa Dungeon DOOM 16×16</option>
+                  </select>
+                  <button id="mem-apply-pattern" className="btn btn-accent">Aplicar Patrón</button>
+                </div>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  <button id="mem-import-hex-btn" className="btn" title="Importar archivo .hex, .txt o .csv">📂 Importar</button>
+                  <input id="mem-import-file" type="file" accept=".hex,.txt,.csv" className="hidden" />
+                  <button id="mem-export-hex" className="btn">💾 .hex</button>
+                  <button id="mem-export-csv" className="btn">📊 .csv</button>
+                  <button id="mem-copy-hex" className="btn">📋 Hex</button>
+                  <button id="mem-copy-ls" className="btn" title="Copiar línea mem= para LogicScript">📋 mem=</button>
+                </div>
+              </div>
+
+              <div className="mem-batch-bar">
+                <input
+                  id="mem-batch-input"
+                  type="text"
+                  className="input-control mono"
+                  placeholder="Desde celda sel. (o 0x00): hex/dec (0F, 80, 255) o ASCII"
+                  aria-label="Secuencia hexadecimal o texto ASCII para programar memoria"
+                />
+                <button id="mem-load-batch" className="btn btn-accent">Cargar Hex/Dec</button>
+                <button id="mem-load-ascii" className="btn">Cargar ASCII</button>
+              </div>
+              <div id="mem-hex-grid" style={{ maxHeight: 280, overflowY: 'auto' }} />
+            </div>
+
+            <div id="mem-panel-doom" className="mem-panel hidden" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="mem-toolbar-row">
+                <div className="doom-tile-palette">
+                  <button type="button" className="doom-brush-btn active" data-doomtile="0"><span className="doom-swatch" style={{ background: '#0f172a' }} />0 Vacío</button>
+                  <button type="button" className="doom-brush-btn" data-doomtile="1"><span className="doom-swatch" style={{ background: '#dc2626' }} />1 Ladrillo</button>
+                  <button type="button" className="doom-brush-btn" data-doomtile="2"><span className="doom-swatch" style={{ background: '#2563eb' }} />2 Piedra</button>
+                  <button type="button" className="doom-brush-btn" data-doomtile="3"><span className="doom-swatch" style={{ background: '#10b981' }} />3 Portal</button>
+                  <button type="button" className="doom-brush-btn" data-doomtile="4"><span className="doom-swatch" style={{ background: '#f59e0b' }} />4 Oro</button>
+                </div>
+                <div style={{ display: 'flex', gap: 5 }}>
+                  <button id="mem-doom-base" className="btn">Cargar Dungeon Base</button>
+                  <button id="mem-doom-walls" className="btn">Cerrar Bordes</button>
+                </div>
+              </div>
+              <div id="mem-doom-grid" className="doom-map-grid" />
+              <div id="mem-doom-coord" className="mono" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                Haz clic o arrastra para pintar el mapa 16×16 del Raycaster DOOM (addr = Y*16 + X).
               </div>
             </div>
 
-            <div className="mem-batch-bar">
-              <input
-                id="mem-batch-input"
-                type="text"
-                className="input-control mono"
-                placeholder="Desde celda sel. (o 0x00): hex/dec (0F, 80, 255) o ASCII"
-                aria-label="Secuencia hexadecimal o texto ASCII para programar memoria"
-              />
-              <button id="mem-load-batch" className="btn btn-accent">Cargar Hex/Dec</button>
-              <button id="mem-load-ascii" className="btn">Cargar ASCII</button>
+            <div id="mem-panel-music" className="mem-panel hidden" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="mem-toolbar-row">
+                <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  Haz clic en una nota para grabarla en la celda seleccionada y avanzar automáticamente (formato 16 bits <span className="mono">TONE_GEN</span>):
+                </span>
+                <select id="mem-music-wave" className="select-control mono" aria-label="Tipo de onda">
+                  <option value="0">Onda 0: Cuadrada (SQR)</option>
+                  <option value="1">Onda 1: Sierra (SAW)</option>
+                  <option value="2">Onda 2: Triangular (TRI)</option>
+                  <option value="3">Onda 3: Senoidal (SIN)</option>
+                </select>
+              </div>
+              <div id="mem-music-notes" className="music-note-palette" />
+              <div id="mem-music-list" className="music-step-list" />
             </div>
-            <div id="mem-hex-grid" style={{ maxHeight: 310, overflowY: 'auto' }} />
+
+            <div id="mem-panel-guide" className="mem-panel hidden">
+              <div className="mem-guide-box">
+                <div className="mem-guide-cards">
+                  <div className="mem-guide-card">
+                    <strong>1. ¿Qué son Direcciones y Valores?</strong>
+                    <span>Piensa en la memoria como casilleros numerados (<span className="mono">0x00, 0x01…</span>). El pin <span className="mono">addr</span> elige qué casillero leer, y la memoria entrega por <span className="mono">q</span> el número guardado ahí.</span>
+                  </div>
+                  <div className="mem-guide-card">
+                    <strong>2. Textos ASCII y Colores RGB332</strong>
+                    <span>Con ancho de 8 bits, cada número representa una letra ASCII (ej. <span className="mono">0x41='A'</span>) o un color <span className="mono">RGB332</span> para <span className="mono">VGA_SCREEN</span> (3 bits Rojo, 3 Verde, 2 Azul).</span>
+                  </div>
+                  <div className="mem-guide-card">
+                    <strong>3. Formato Musical TONE_GEN (16b)</strong>
+                    <span>Para sintetizadores, divide el bus de 16 bits con <span className="mono">SPLITTER split=12,2,1</span>: bits <span className="mono">0..11</span> = Frecuencia Hz, <span className="mono">12..13</span> = Onda, bit <span className="mono">14</span> = Gate.</span>
+                  </div>
+                  <div className="mem-guide-card">
+                    <strong>4. Inspección en Vivo de la Celda Seleccionada</strong>
+                    <span>Selecciona cualquier casillero en Hex, DOOM o Partitura y revisa aquí su decodificación en tiempo real en todos los formatos.</span>
+                  </div>
+                </div>
+                <div id="mem-guide-disasm" />
+              </div>
+            </div>
+
             <div id="mem-cell-detail" className="mem-cell-detail mono">
               Celda 0x00 | Hex: 0x00 | Dec: 0 | Signo: 0 | Bin: 00000000 | ASCII: ·
             </div>
@@ -829,8 +902,31 @@ for i in 0..7 ... end  # Soporta bucles anidados y aritmética {i*2+1}`}</pre>
               <div className="kbd-row"><span>Construir script</span><span className="kbd">Ctrl Enter</span></div>
               <div className="kbd-row"><span>Editar etiqueta</span><span className="kbd">F2</span></div>
               <div className="kbd-row"><span>Ordenar circuito</span><span className="kbd">O</span></div>
-              <div className="kbd-row"><span>Controles DOOM / Gamepad</span><span className="kbd">WASD · J / F</span></div>
+              <div className="kbd-row"><span>Agrupar / desagrupar</span><span className="kbd">Ctrl G / ⇧Ctrl G</span></div>
+              <div className="kbd-row"><span>Controles DOOM / Gamepad</span><span className="kbd">WASD · E / J</span></div>
               <div className="kbd-row"><span>Esta ayuda</span><span className="kbd">?</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal: Modo Aprendizaje desde 0 */}
+      <div id="learn-modal" className="modal-backdrop hidden">
+        <div className="modal-card wide" style={{ maxWidth: 820 }}>
+          <div className="modal-header">
+            <div className="modal-title"><span>🎓 Academia LogicStudio — Aprende desde 0</span></div>
+            <button className="btn btn-icon modal-close" aria-label="Cerrar aprendizaje" data-modal="learn-modal">✕</button>
+          </div>
+          <div className="modal-body">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+              <span id="learn-progress-text" className="mono" style={{ fontWeight: 800, color: 'var(--accent)' }}>0/10</span>
+              <div style={{ flex: 1, height: 6, borderRadius: 99, background: 'var(--bg-input)', overflow: 'hidden' }}>
+                <div id="learn-progress-fill" style={{ height: '100%', width: 0, background: 'linear-gradient(90deg,var(--accent),var(--accent-secondary))', transition: 'width 0.35s ease' }} />
+              </div>
+            </div>
+            <div className="learn-layout">
+              <div id="learn-list" className="learn-sidebar" />
+              <div id="learn-detail" className="learn-content" />
             </div>
           </div>
         </div>
@@ -864,7 +960,7 @@ for i in 0..7 ... end  # Soporta bucles anidados y aritmética {i*2+1}`}</pre>
         <div className="modal-card">
           <div className="modal-header">
             <div className="modal-title">
-              <span>LogicStudio Pro — Versión Beta 0.3</span>
+              <span>LogicStudio Pro — Versión Beta 0.4</span>
             </div>
             <button className="btn btn-icon modal-close" aria-label="Cerrar créditos" data-modal="credits-modal">✕</button>
           </div>
@@ -874,7 +970,7 @@ for i in 0..7 ... end  # Soporta bucles anidados y aritmética {i*2+1}`}</pre>
                 Creado y diseñado por Alejandro Arbós Gómez
               </div>
               <p style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-                Simulador interactivo de electrónica digital y arquitectura de computadores de hasta 64 bits en tiempo real, con buses, túneles inalámbricos, memorias masivas, pantallas VGA y motor 3D DOOM.
+                Simulador interactivo de electrónica digital y arquitectura de computadores de hasta 64 bits en tiempo real, con modo aprendizaje desde cero, cables articulados, agrupación de módulos, memorias visuales, pantallas VGA y motor 3D DOOM.
               </p>
             </div>
 
@@ -883,7 +979,7 @@ for i in 0..7 ... end  # Soporta bucles anidados y aritmética {i*2+1}`}</pre>
                 <span className="kbd">Espacio</span> Pausa / Arrastrar lienzo
               </div>
               <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
-                <span className="kbd">F2</span> Editar etiqueta sin doble clic
+                <span className="kbd">Ctrl+G</span> Agrupar selección
               </div>
               <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                 <span className="kbd">2 Dedos / Pinch</span> Navegación Trackpad
@@ -892,15 +988,15 @@ for i in 0..7 ... end  # Soporta bucles anidados y aritmética {i*2+1}`}</pre>
                 <span className="kbd">Ctrl+K</span> Paleta rápida de chips
               </div>
               <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
-                <span className="kbd">WASD / F</span> Controles Gamepad DOOM
+                <span className="kbd">WASD · E / J</span> Controles Gamepad DOOM
               </div>
               <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
-                <span className="kbd">O</span> Ordenar circuito automáticamente
+                <span className="kbd">F</span> Centrar circuito siempre
               </div>
             </div>
           </div>
           <div className="modal-footer">
-            <span style={{ marginRight: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>© 2026 Alejandro Arbós Gómez • Beta 0.3</span>
+            <span style={{ marginRight: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>© 2026 Alejandro Arbós Gómez • Beta 0.4</span>
             <button className="btn btn-accent modal-close" data-modal="credits-modal">¡Entendido!</button>
           </div>
         </div>

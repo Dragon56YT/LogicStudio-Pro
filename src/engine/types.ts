@@ -112,7 +112,7 @@ export interface LogicComponent {
   y: number;
   w: number;
   h: number;
-  bits?: number; // 1, 2, 4, 8, 16, 32, 64
+  bits?: number; // 1..64 bits
   addrBits?: number; // 4..16 for RAM_N / ROM_N
   tunnelTag?: string;
   tunnelDir?: 'in' | 'out';
@@ -121,6 +121,9 @@ export interface LogicComponent {
   sliceLo?: number;
   signedMode?: boolean;
   modBase?: number;
+  groupId?: string;
+  groupName?: string;
+  groupColor?: string;
   label: string;
   noteText: string;
   inputCount: number;
@@ -150,6 +153,9 @@ export interface Wire {
   signal: PinSignal;
   width?: number;
   unstable?: boolean;
+  waypoints?: Array<{ x: number; y: number }>;
+  curveOffset?: number;
+  customColor?: string;
 }
 
 export interface CustomICPinRef {
@@ -287,6 +293,57 @@ export function deserializeCircuitData<T = unknown>(json: string): T {
     }
     return v;
   }) as T;
+}
+
+export interface LsProCircuitFile {
+  format: 'logicstudio-pro';
+  version: string;
+  app: string;
+  author?: string;
+  savedAt?: string;
+  components: LogicComponent[];
+  wires: Wire[];
+  customICs?: CustomICDef[];
+}
+
+export function exportLsProData(payload: {
+  components: LogicComponent[];
+  wires: Wire[];
+  customICs?: CustomICDef[];
+  author?: string;
+}): string {
+  const file: LsProCircuitFile = {
+    format: 'logicstudio-pro',
+    version: '0.4',
+    app: 'LogicStudio Pro Beta 0.4',
+    author: payload.author || 'Alejandro Arbós Gómez',
+    savedAt: new Date().toISOString(),
+    components: payload.components,
+    wires: payload.wires,
+    customICs: payload.customICs || []
+  };
+  return serializeCircuitData(file, false);
+}
+
+export function parseCircuitImport(rawText: string): {
+  format: 'lspro' | 'json';
+  version: string;
+  components: LogicComponent[];
+  wires: Wire[];
+  customICs: CustomICDef[];
+} {
+  const data = deserializeCircuitData<Partial<LsProCircuitFile>>(rawText);
+  if (!data || !Array.isArray(data.components)) {
+    throw new Error('Archivo inválido: no contiene componentes de circuito');
+  }
+  const isLsPro = data.format === 'logicstudio-pro';
+  return {
+    format: isLsPro ? 'lspro' : 'json',
+    version: typeof data.version === 'string' ? data.version : '0.3',
+    components: data.components,
+    wires: Array.isArray(data.wires) ? data.wires : [],
+    customICs: Array.isArray(data.customICs) ? data.customICs : []
+  };
 }
 
 let uidCounter = 1;

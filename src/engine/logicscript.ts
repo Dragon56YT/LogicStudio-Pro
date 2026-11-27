@@ -1,4 +1,4 @@
-import { COMPONENT_CATALOG, createComponent, getSplitterChunks } from './catalog';
+import { COMPONENT_CATALOG, createComponent, getSplitterChunks, syncComponentPins } from './catalog';
 import { evaluateCircuitDeterministic } from './simulator';
 import { CustomICDef, LogicComponent, Wire, genId } from './types';
 
@@ -47,7 +47,9 @@ export const LS_TYPE_ALIASES: Record<string, string> = {
   FA: 'FULL_ADDER',
   SEG7: 'SEG7_DISPLAY',
   HEX: 'HEX_DISPLAY',
+  HEX_N: 'HEX_DISPLAY_N',
   HEX64: 'HEX_DISPLAY_N',
+  DEC_N: 'DEC_DISPLAY_N',
   TRISTATE: 'TRI_BUFFER',
   INV: 'NOT',
   ONE: 'HIGH',
@@ -69,6 +71,7 @@ export const LS_TYPE_ALIASES: Record<string, string> = {
   DUALRAM: 'DUAL_RAM_N',
   DRAM: 'DUAL_RAM_N',
   LCD: 'LCD_TEXT',
+  BAR_N: 'LED_BAR_8',
   BAR8: 'LED_BAR_8',
   BAR16: 'LED_BAR_8',
   TONE: 'TONE_GEN',
@@ -438,7 +441,7 @@ function lsSubst(t: string, env: Record<string, number | string>): string {
   }
   return out.replace(/\{([^}]+)\}/g, (m, inner) => {
     const trimmed = inner.trim();
-    if (trimmed in env && typeof env[trimmed] === 'string') return String(env[trimmed]);
+    if (trimmed in env) return String(env[trimmed]);
     const val = evalIntExpr(trimmed, numEnv);
     return val !== null ? String(val) : m;
   });
@@ -546,20 +549,20 @@ function lsExpandBlock(
       continue;
     }
 
-    // for i in A..B
+    // for i in A..B ... end / endfor
     const mf = t.match(/^for\s+([A-Za-z_]\w*)\s+in\s+(-?\d+)\s*\.\.\s*(-?\d+)\s*$/i);
     if (mf) {
       let loopDepth = 1;
       let j = i + 1;
       for (; j < items.length; j++) {
         if (/^for\s/i.test(items[j].t)) loopDepth++;
-        else if (/^end$/i.test(items[j].t)) {
+        else if (/^(?:end|endfor)$/i.test(items[j].t)) {
           loopDepth--;
           if (!loopDepth) break;
         }
       }
       if (j >= items.length) {
-        errors.push({ line: n, msg: 'Falta "end" para cerrar este bucle "for"', sourceLine: raw });
+        errors.push({ line: n, msg: 'Falta "end" (o "endfor") para cerrar este bucle "for"', sourceLine: raw });
         return;
       }
       const a = Number(mf[2]);
@@ -577,8 +580,8 @@ function lsExpandBlock(
       i = j;
       continue;
     }
-    if (/^end$/i.test(t)) {
-      errors.push({ line: n, msg: '"end" sin "for" que lo abra', sourceLine: raw });
+    if (/^(?:end|endfor)$/i.test(t)) {
+      errors.push({ line: n, msg: `"${t}" sin "for" que lo abra`, sourceLine: raw });
       continue;
     }
     out.push({ t, n, raw });
@@ -758,9 +761,10 @@ function parseMemTokens(rawMem: string, maxLen: number): bigint[] {
   return out;
 }
 
-export function lsLayout(auto: LogicComponent[], wires: Wire[], ox: number, oy: number): void {
+function lsLayoutSubgraph(auto: LogicComponent[], wires: Wire[], ox: number, oy: number): void {
   const idx = new Map(auto.map((c, i) => [c.id, i]));
   const N = auto.length;
+  if (N === 0) return;
   const succ: number[][] = auto.map(() => []);
   const rawIn = new Array<number>(N).fill(0);
 
@@ -870,6 +874,48 @@ export function lsLayout(auto: LogicComponent[], wires: Wire[], ox: number, oy: 
   });
 }
 
+export function lsLayout(auto: LogicComponent[], wires: Wire[], ox: number, oy: number): void {
+  const hasGroups = auto.some(c => Boolean(c.groupId));
+  if (!hasGroups) {
+    lsLayoutSubgraph(auto, wires, ox, oy);
+    return;
+  }
+
+  // Group-aware layout: lay out ungrouped nodes first, then pack each group cleanly in non-overlapping group islands
+  const ungrouped = auto.filter(c => !c.groupId);
+  const groups = new Map<string, LogicComponent[]>();
+  for (const c of auto) {
+    if (!c.groupId) continue;
+    const arr = groups.get(c.groupId) || [];
+    arr.push(c);
+    groups.set(c.groupId, arr);
+  }
+
+  let cursorY = oy;
+  if (ungrouped.length > 0) {
+    lsLayoutSubgraph(ungrouped, wires, ox, cursorY);
+    const minY = Math.min(...ungrouped.map(c => c.y - c.h / 2));
+    const maxY = Math.max(...ungrouped.map(c => c.y + c.h / 2));
+    const shiftY = cursorY - minY;
+    if (Number.isFinite(shiftY)) ungrouped.forEach(c => { c.y = Math.round((c.y + shiftY) / 10) * 10; });
+    cursorY += Math.max(120, maxY - minY) + 90;
+  }
+
+  for (const members of groups.values()) {
+    lsLayoutSubgraph(members, wires, ox, 0);
+    const minX = Math.min(...members.map(c => c.x - c.w / 2));
+    const minY = Math.min(...members.map(c => c.y - c.h / 2));
+    const maxY = Math.max(...members.map(c => c.y + c.h / 2));
+    const dx = ox - minX;
+    const dy = cursorY - minY;
+    members.forEach(c => {
+      c.x = Math.round((c.x + dx) / 10) * 10;
+      c.y = Math.round((c.y + dy) / 10) * 10;
+    });
+    cursorY += Math.max(100, maxY - minY) + 90;
+  }
+}
+
 export function compileLogicScript(
   src: string,
   existingComponents: LogicComponent[] = [],
@@ -923,6 +969,10 @@ export function compileLogicScript(
   const validTypes = COMPONENT_CATALOG.filter(m => m.type !== 'CUSTOM_IC').map(m => m.type);
   const allTypeNames = [...validTypes, ...Object.keys(LS_TYPE_ALIASES)];
   const byAlias = new Map<string, LogicComponent>();
+  const failedAliases = new Set<string>();
+  const explicitSplitAliases = new Set<string>();
+  const groupRegistry = new Map<string, { id: string; color: string }>();
+  const GROUP_PALETTE = ['#00f5d4', '#38bdf8', '#a855f7', '#f59e0b', '#10b981', '#f43f5e'];
   const comps: LogicComponent[] = [];
   const validLedColors = new Set(['cyan', 'emerald', 'rose', 'amber', 'violet', 'blue']);
   let lastFixedX = 0;
@@ -940,6 +990,7 @@ export function compileLogicScript(
     }
     const type = LS_TYPE_ALIASES[p.type] || p.type;
     if (!validTypes.includes(type)) {
+      failedAliases.add(p.alias);
       const sug = closestMatch(p.type, allTypeNames, 5);
       const resolvedSug = sug ? LS_TYPE_ALIASES[sug] || sug : null;
       errors.push({
@@ -962,6 +1013,18 @@ export function compileLogicScript(
 
     if (o.label !== undefined) co.label = o.label;
     if (o.text !== undefined) co.noteText = o.text;
+    if (o.group !== undefined && o.group.trim()) {
+      const gName = o.group.trim();
+      let entry = groupRegistry.get(gName.toLowerCase());
+      if (!entry) {
+        const col = o.groupcolor || GROUP_PALETTE[groupRegistry.size % GROUP_PALETTE.length];
+        entry = { id: genId('grp'), color: col };
+        groupRegistry.set(gName.toLowerCase(), entry);
+      }
+      co.groupId = entry.id;
+      co.groupName = gName;
+      co.groupColor = o.groupcolor || entry.color;
+    }
     if (o.color) {
       const k = o.color.toLowerCase();
       if (!validLedColors.has(k)) fail(`Color "${o.color}" no válido`, 'Colores permitidos: cyan, emerald, rose, amber, violet, blue');
@@ -974,8 +1037,19 @@ export function compileLogicScript(
     }
     if (o.bits) {
       const b = parseInt(o.bits, 10);
-      if (![1, 2, 4, 8, 16, 32, 64].includes(b)) fail('bits debe ser 1, 2, 4, 8, 16, 32 o 64');
-      else co.bits = b;
+      if (!Number.isInteger(b) || b < 1 || b > 64) {
+        fail('bits debe ser un entero entre 1 y 64', 'Ejemplos: bits=1, bits=6 (para coordenadas 0..63), bits=8, bits=16, bits=32, bits=64.');
+      } else if (type === 'DIP_SWITCH' && (b < 4 || b > 16)) {
+        fail('DIP_SWITCH admite bits entre 4 y 16');
+      } else if ((type === 'SPLITTER' || type === 'MERGER') && b < 2) {
+        fail(`${type} requiere al menos bits=2`);
+      } else if (type === 'LED_BAR_8' && b !== 8 && b !== 16) {
+        fail('LED_BAR_8 admite bits=8 o bits=16');
+      } else if (type === 'BIN2BCD_N' && (b < 4 || b > 16)) {
+        fail('BIN2BCD_N admite bits entre 4 y 16');
+      } else {
+        co.bits = b;
+      }
     }
     if (o.addrbits) {
       const ab = parseInt(o.addrbits, 10);
@@ -993,8 +1067,21 @@ export function compileLogicScript(
       else co.tunnelDir = o.dir;
     }
     if (o.split) {
-      const parts = o.split.split(',').map(x => parseInt(x.trim(), 10)).filter(x => x > 0);
-      if (parts.length > 0) co.splitWidths = parts;
+      const sNorm = o.split.trim().toLowerCase();
+      if (sNorm === 'bits' || sNorm === '1bit' || sNorm === 'auto' || sNorm === '1') {
+        const bw = Math.max(2, Math.min(64, co.bits ?? 8));
+        co.splitWidths = new Array(bw).fill(1);
+        explicitSplitAliases.add(p.alias);
+      } else {
+        const parts = o.split.split(',').map(x => parseInt(x.trim(), 10)).filter(x => x > 0);
+        if (parts.length > 0) {
+          co.splitWidths = parts;
+          if (!o.bits) co.bits = Math.min(64, parts.reduce((a, c) => a + c, 0));
+          explicitSplitAliases.add(p.alias);
+        } else {
+          fail('split inválido', 'Usa split=1,1,1,1 o split=8,8 o split=bits');
+        }
+      }
     }
     if (o.slice) {
       const sm = o.slice.match(/^(\d+)\s*[:,-]\s*(\d+)$/);
@@ -1013,12 +1100,13 @@ export function compileLogicScript(
       if (!(k > 0 && k <= 100000)) fail('hz debe estar entre 0 y 100000');
       else co.freqHz = k;
     }
-    if (o.value !== undefined) {
-      if (type === 'HEX_KEY' || type === 'HEX_KEY_N') co.hexVal = parseBigIntLiteral(o.value);
+    const rawVal = o.value ?? o.val;
+    if (rawVal !== undefined) {
+      if (type === 'HEX_KEY' || type === 'HEX_KEY_N') co.hexVal = parseBigIntLiteral(rawVal);
       else if (type === 'CONST_N' || type === 'DIP_SWITCH' || type === 'NUM_STEPPER' || type === 'SLIDER_ADC' || type === 'ROTARY_ENC') {
-        co.initialValue = parseBigIntLiteral(o.value);
+        co.initialValue = parseBigIntLiteral(rawVal);
       } else {
-        co.initialValue = o.value === '1' ? 1 : 0;
+        co.initialValue = rawVal === '1' ? 1 : 0;
       }
     }
     if (o.seq) {
@@ -1063,7 +1151,10 @@ export function compileLogicScript(
       }
     }
 
-    if (bad) continue;
+    if (bad) {
+      failedAliases.add(p.alias);
+      continue;
+    }
     let px = 0;
     let py = 0;
     if (p.at) {
@@ -1086,10 +1177,18 @@ export function compileLogicScript(
   const seen = new Set<string>();
   const driven = new Map<string, LogicComponent>();
   const aliasList = Array.from(byAlias.keys());
+  const reportedFailedConns = new Set<string>();
 
   const pinOf = (alias: string, pin: string, line: number, raw: string) => {
     const comp = byAlias.get(alias);
     if (!comp) {
+      if (failedAliases.has(alias)) {
+        if (!reportedFailedConns.has(alias)) {
+          reportedFailedConns.add(alias);
+          warnings.push(`Conexiones hacia "${alias}" omitidas hasta corregir su declaración "place".`);
+        }
+        return null;
+      }
       const sug = closestMatch(alias, aliasList, 4);
       errors.push({
         line,
@@ -1099,15 +1198,30 @@ export function compileLogicScript(
       });
       return null;
     }
-    const p = comp.pins.find(q => q.id.toLowerCase() === pin.toLowerCase());
+    let p = comp.pins.find(q => q.id.toLowerCase() === pin.toLowerCase());
+    // Smart auto-expand SPLITTER / MERGER without explicit split= when connecting per-bit pK
+    if (!p && (comp.type === 'SPLITTER' || comp.type === 'MERGER') && !explicitSplitAliases.has(alias)) {
+      const pm = pin.match(/^p(\d+)$/i);
+      const b = Math.max(2, Math.min(64, comp.bits || 8));
+      if (pm && Number(pm[1]) < b) {
+        comp.splitWidths = new Array(b).fill(1);
+        syncComponentPins(comp, customICs);
+        explicitSplitAliases.add(alias);
+        p = comp.pins.find(q => q.id.toLowerCase() === pin.toLowerCase());
+      }
+    }
     if (!p) {
       const pinIds = comp.pins.map(q => q.id);
       const sug = closestMatch(pin, pinIds, 4);
+      const splitHint =
+        (comp.type === 'SPLITTER' || comp.type === 'MERGER')
+          ? ' En SPLITTER/MERGER >8b especifica split=1,1,... (o split=bits) si quieres pines de 1 bit.'
+          : '';
       errors.push({
         line,
         msg: `"${alias}" (${comp.type}) no tiene el pin "${pin}".`,
         sourceLine: raw,
-        suggestion: `${sug ? `¿Quizás "${sug}"? ` : ''}Pines válidos: ${pinIds.join(', ')}`
+        suggestion: `${sug ? `¿Quizás "${sug}"? ` : ''}Pines válidos: ${pinIds.join(', ')}.${splitHint}`
       });
       return null;
     }
@@ -1236,7 +1350,7 @@ export function formatLogicScriptDiagnosticsForAI(
 ): string {
   const lines = script.split(/\r?\n/);
   const out: string[] = [
-    'Necesito corregir un error en mi script de LogicScript (simulador LogicStudio Pro Beta 0.3).',
+    'Necesito corregir un error en mi script de LogicScript v2 (simulador LogicStudio Pro Beta 0.4).',
     ''
   ];
   if (errors.length) {
@@ -1255,7 +1369,7 @@ export function formatLogicScriptDiagnosticsForAI(
   if (includeFullScript) {
     out.push('', '### Script completo actual:', '```logicscript', script.trim(), '```');
   }
-  out.push('', 'Por favor devuelve únicamente el bloque ```logicscript corregido listo para importar.');
+  out.push('', 'Recuerda: bits acepta 1..64, usa split=bits o split=1,1,... en SPLITTER/MERGER >8b si necesitas pines de 1 bit, y cierra bucles con `end` o `endfor`. Devuelve únicamente el bloque ```logicscript corregido.');
   return out.join('\n');
 }
 
@@ -1273,7 +1387,7 @@ export function exportCircuitToLogicScript(components: LogicComponent[], wires: 
     alias.set(c.id, a);
   });
 
-  const lines = ['# LogicScript exportado desde LogicStudio Pro Beta 0.3', ''];
+  const lines = ['# LogicScript exportado desde LogicStudio Pro Beta 0.4', ''];
   const colorTypes = new Set(['LED', 'SEG7_DISPLAY', 'SEG7_MULTI', 'HEX_DISPLAY', 'HEX_DISPLAY_N', 'DEC_DISPLAY_N', 'LED_BAR_4', 'LED_BAR_8', 'LCD_TEXT']);
   components.forEach(c => {
     if (c.type === 'CUSTOM_IC') {
@@ -1284,6 +1398,7 @@ export function exportCircuitToLogicScript(components: LogicComponent[], wires: 
     const q = (s: string) => `"${String(s).replace(/"/g, "'")}"`;
     const parts: string[] = [];
     if (c.label) parts.push(`label=${q(c.label)}`);
+    if (c.groupName) parts.push(`group=${q(c.groupName)}`);
     if (c.type === 'LABEL') parts.push(`text=${q(c.noteText || '')}`);
     if (c.bits && meta?.scalableBits && c.bits !== (meta.defaultBits ?? 1)) parts.push(`bits=${c.bits}`);
     if ((c.type === 'RAM_N' || c.type === 'ROM_N' || c.type === 'DUAL_RAM_N') && c.addrBits && c.addrBits !== 8) parts.push(`addrBits=${c.addrBits}`);
@@ -1370,28 +1485,50 @@ export function generateLogicScriptAIPrompt(): string {
     .join('\n');
 
   return [
-    'Eres un ingeniero experto en arquitectura de computadores y diseño digital para el simulador "LogicStudio Pro Beta 0.3".',
-    'Tu tarea es transformar la petición del usuario en un circuito completo escrito en LogicScript v2.',
+    'Eres un ingeniero experto en arquitectura de computadores y diseño digital para el simulador "LogicStudio Pro Beta 0.4".',
+    'Tu tarea es transformar la petición del usuario en un circuito completo, limpio y 100% válido en LogicScript v2.',
     '',
-    '## CAPACIDADES DEL SIMULADOR (BETA 0.3)',
-    '- Buses exactos 1..64 bits (BigInt), Túneles inalámbricos (`TUNNEL`), `SPLITTER`, `MERGER`, `BUS_SLICE`, `BUS_PACK4`, `BUS_UNPACK4`, `BIT_EXTEND`, `CROSSBAR_2X2`, `PRIORITY_ARB`.',
-    '- Aritmética y DSP: `ALU_N`, `ADDER_N`, `SUB_N`, `MULT_N`, `DIV_N`, `SAT_ADDER_N`, `SQRT_N`, `COMP_N`, `COMP_WIN_N`, `MAC_N`, `MIN_MAX_N`, `POPCOUNT_N`, `CRC16_GEN`.',
-    '- Secuencial y Control: `COUNTER_N`, `MOD_COUNTER_N`, `WATCHDOG_N`, `DEBOUNCER`, `STOPWATCH_N`, `REG_N`, `REG_FILE_N`, `FIFO_N`, `STACK_LIFO`, `RAM_N`, `ROM_N`, `DUAL_RAM_N`.',
-    '- Visualización, Audio y E/S: `VGA_SCREEN`, `LCD_TEXT`, `TEXT_CONSOLE`, `VU_METER_N`, `ANIM32_GPU`, `LED_MATRIX_8X8`, `HEX_DISPLAY_N`, `DEC_DISPLAY_N`, `SLIDER_ADC`, `ROTARY_ENC`, `TONE_GEN`.',
+    '## REGLAS CRÍTICAS DE VALIDACIÓN (NO COMETAS ESTOS ERRORES)',
+    '1. **Ancho de bits (`bits=1..64`)**: Cualquier entero de `1` a `64` es válido en bloques escalables (`CONST_N`, `COUNTER_N`, `MOD_COUNTER_N`, `ADDER_N`, `ALU_N`, `COMP_N`, `SPLITTER`, `MERGER`, `RAM_N`, `ROM_N`, `TUNNEL`, etc.). Ej: `bits=6` es válido para coordenadas `0..63` de VGA. Límites especiales: `DIP_SWITCH` (`4..16`), `LED_BAR_8` (`8` o `16`), `BIN2BCD_N` (`4..16`), `SPLITTER`/`MERGER` (`2..64`).',
+    '2. **SPLITTER y MERGER (`p0..pN`)**:',
+    '   - Si `bits <= 8` y omites `split=`, divide automáticamente bit a bit (`p0..p{bits-1}` de 1b cada uno).',
+    '   - Si `bits > 8` y omites `split=`, divide en bytes/palabras (`16b -> 8,8`; `32b -> 8,8,8,8`; `64b -> 16,16,16,16`). Si quieres pines de 1 bit en buses >8b, escribe explícitamente `split=bits` o `split=1,1,1,...`.',
+    '   - En `SPLITTER`: entrada `bus` -> salidas `p0, p1, ...`. En `MERGER`: entradas `p0, p1, ...` -> salida `bus`. ¡Nunca uses `in0` ni `out` en SPLITTER/MERGER!',
+    '3. **Nombres exactos de pines frecuentes** (respeta mayúsculas/minúsculas y nombres):',
+    '   - `SWITCH` / `BUTTON` / `CLOCK` / `HIGH` / `LOW` / `CONST_N` / `NUM_STEPPER`: salida `out`. (`DIP_SWITCH`: salida `bus`).',
+    '   - `COUNTER_N`: IN `clk, en, up, ld, rst, d` -> OUT `q, co`. (**OJO**: es `ld`, NO `load`).',
+    '   - `MOD_COUNTER_N`: IN `clk, en, mod, rst` -> OUT `q, wrap`.',
+    '   - `REG_N`: IN `clk, en, rst, d` -> OUT `q`.',
+    '   - `RAM_N`: IN `addr, din, we, clk` -> OUT `dout`. `ROM_N`: IN `addr` -> OUT `dout`.',
+    '   - `ALU_N`: IN `a, b, op(4b)` -> OUT `out, z, c, n, v` (op: `0=ADD, 1=SUB, 2=AND, 3=OR, 4=XOR, 5=SHL, 6=SHR, 7=MUL, 8=NOT A, 9=INC A, 10=DEC A, 11=CMP A-B, 12=NAND, 13=NOR, 14=ROR, 15=PASS B`).',
+    '   - `COMP_N`: IN `a, b` -> OUT `eq, gt, lt`.',
+    '   - `VGA_SCREEN`: IN `px(6b), py(6b), col(8b), we, clk, swap, clr`. (Resolución fija `64×48`, color RGB332).',
+    '   - `RAYCAST_CORE`: IN `clk, rst, pad(5b), mdat(8b)` -> OUT `maddr(8b), px(6b), py(6b), col(8b), we, swap, kills(8b)`.',
+    '   - `LCD_TEXT`: IN `char(8b), col(4b), row, we, clk, clr` (2 filas × 16 cols ASCII).',
+    '   - `TEXT_CONSOLE`: IN `char(8b), we, clk, clr`.',
+    '   - `TONE_GEN`: IN `freq(12b), wave(2b), gate` (ondas: `0=Cuadrada, 1=Sierra, 2=Triángulo, 3=Senoidal`).',
+    '   - `GAMEPAD`: OUT `w, s, a, d, fire, pad(5b)`.',
+    '4. **Dirección de `connect`**: siempre `connect ORIGEN.pin -> DESTINO.pin` (salida hacia entrada; admite lista separada por comas y rangos `a.p0..p3 -> b.d0..d3`). Nunca conectes dos salidas juntas salvo `TRI_BUFFER`.',
+    '5. **Coordenadas `at`**:',
+    '   - Absolutas: `at -400,120` (admite enteros positivos o negativos).',
+    '   - Relativas al bloque anterior: usa `+` o `~`, ej: `at +140,+0` o `at ~-120,~80`. **Nunca** pongas `at -120,+40` esperando desplazamiento X negativo; escribe `at ~-120,~40`.',
+    '   - También puedes omitir `at ...` en todo el script y el simulador auto-ordenará por columnas DAG respetando `group="..."`.',
+    '6. **Bucles, macros y agrupación**:',
+    '   - Bucles: `for i in 0..7 ... end` (también acepta `endfor`). Expresiones con `{i}`, `{i*40}`, `{100+i*60}`.',
+    '   - Macros: `macro nombre(p1, p2) ... endmacro` + `call nombre(a1, a2)`.',
+    '   - Agrupación visual: añade `group="Nombre del Módulo"` en `place` para encerrar subsistemas en marcos coloreados.',
     '',
-    '## SINTAXIS DE LOGICSCRIPT V2',
-    '- Variables: `const MASK = 0xFF` (`$MASK`) y `let y = -100 + i * 60` (`{y}`).',
-    '- Macros reutilizables: `macro nombre(p1, p2) ... endmacro` + `call nombre(a1, a2)`.',
-    '- Bucles anidados: `for i in 0..7 ... end` con aritmética `{i*2+1}`, `{i/2}`, `{i%4}`.',
-    '- Posición relativa opcional: `at +140,+0` o `at ~140,~40` desde el último bloque fijo.',
-    '- Memoria ASCII y repetición: `mem="TEXTO"` o `mem=0x00*8,0xFF,0xAA*2`.',
-    '- Conexión por rango de pines: `connect a.q0..q3 -> b.d0..d3`.',
+    '## CODIFICACIONES DE DATOS Y MEMORIA',
+    '- **RGB332 (`VGA_SCREEN`)**: `col = (R3 << 5) | (G3 << 2) | B2` (`R:0..7, G:0..7, B:0..3`). Ej: Rojo=`0xE0`, Naranja=`0xF0`, Amarillo=`0xFC`, Verde=`0x1C`, Cian=`0x1F`, Azul=`0x03`, Magenta=`0xE3`, Blanco=`0xFF`, Negro=`0x00`.',
+    '- **Mapa DOOM 16×16 (`ROM_N addrBits=8 bits=8` -> `RAYCAST_CORE`)**: `addr = y*16 + x`. Valores: `0x00`=Pasillo libre, `0x01`=Ladrillo rojo, `0x02`=Piedra azul, `0x03`=Portal verde, `0x04`=Metal dorado. ¡Deja espacio libre alrededor de `(2,2)` donde aparece el jugador!',
+    '- **Partitura `TONE_GEN` en ROM 16b**: palabra `w = (gate << 14) | (wave << 12) | freqHz`. Ej: La4 (440Hz, cuadrada, gate=1) = `(1<<14)|440 = 0x41B8`; Silencio = `0x0000`.',
+    '- **Texto ASCII en `ROM_N`**: `mem="HOLA MUNDO!"` o `mem=0x48,0x4F,0x4C,0x41,0x00*4`.',
     '',
-    '## CATÁLOGO DE COMPONENTES DISPONIBLES',
+    '## CATÁLOGO COMPLETO DE COMPONENTES Y PINES',
     catalogLines,
     '',
     '## FORMATO DE RESPUESTA',
-    `Devuelve UN único bloque ${F}logicscript válido y debajo una breve explicación (máx 6 líneas).`,
+    `Devuelve UN único bloque ${F}logicscript válido y compilable sin comentarios fuera de sintaxis y debajo una explicación breve (máx 6 líneas).`,
     '',
     '## EJEMPLO LOGICSCRIPT V2',
     `${F}logicscript`,

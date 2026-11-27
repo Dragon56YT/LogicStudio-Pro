@@ -21,7 +21,7 @@ export const PRESET_LIST: PresetMeta[] = [
   { id: 'tunnels_demo', label: '10. Túneles Inalámbricos (Cero Cruces)' },
   { id: 'risc_cpu16', label: '11. Procesador RISC 16-Bit (Regs + ROM + ALU + DualRAM)' },
   { id: 'lcd_terminal', label: '12. Terminal LCD 16×2 ASCII + ROM Mensajes' },
-  { id: 'vga_pattern', label: '13. Pantalla VGA 64×48 (Generador Hardware)', recommendedMultiplier: 3000 },
+  { id: 'vga_pattern', label: '13. Pantalla VGA 64×48 (Túnel 3D Infinito)', recommendedMultiplier: 3000 },
   { id: 'chiptune_synth', label: '14. Sintetizador ROM Audio Hz + Barra LED + Matriz 8×8' },
   { id: 'doom_3d', label: '15. DOOM 3D Raycaster Funcional (Gamepad + ROM + VGA)', recommendedMultiplier: 3000 },
   { id: 'anim_32_scenes', label: '16. 🎬 Animación 32 Escenas: Pepe el Bot vs El Bug', recommendedMultiplier: 3000 },
@@ -55,7 +55,7 @@ export function buildPresetCircuit(key: string): {
   };
 
   if (key === 'demo') {
-    add('LABEL', 0, -195, { noteText: 'LogicStudio Pro Beta 0.3 — Escalabilidad 64-Bit' });
+    add('LABEL', 0, -195, { noteText: 'LogicStudio Pro Beta 0.4 — Escalabilidad 64-Bit' });
     const swA = add('SWITCH', -240, -100, { label: 'A', initialValue: 1 });
     const swB = add('SWITCH', -240, -30, { label: 'B', initialValue: 1 });
     const gateAnd = add('AND', -90, -65, { label: 'AND' });
@@ -371,12 +371,12 @@ export function buildPresetCircuit(key: string): {
     link(clk, 'out', lcd, 'clk');
     link(clr, 'out', lcd, 'clr');
   } else if (key === 'vga_pattern') {
-    add('LABEL', 0, -225, { noteText: 'Generador Gráfico VGA 64×48 RGB332 por Hardware (Sync 64×48 + Shader Animado)' });
-    const clk = add('CLOCK', -400, -60, { label: 'Pixel CLK', freqHz: 15 });
-    const hi = add('HIGH', -400, 15);
-    const c47 = add('CONST_N', -400, 130, { label: 'Alto-1 (47)', bits: 6, initialValue: 47n });
-    const cntX = add('COUNTER_N', -245, -90, { label: 'X (0..63)', bits: 6 });
-    const cntY = add('COUNTER_N', -245, 55, { label: 'Y (0..47)', bits: 6 });
+    add('LABEL', 20, -245, { noteText: 'Túnel 3D Infinito en Loop por Hardware (ROM Polar 3D + Desplazamiento + Shader RGB332)' });
+    const clk = add('CLOCK', -460, -70, { label: 'Pixel CLK', freqHz: 15 });
+    const hi = add('HIGH', -460, 15);
+    const c47 = add('CONST_N', -460, 135, { label: 'Alto-1 (47)', bits: 6, initialValue: 47n });
+    const cntX = add('COUNTER_N', -310, -90, { label: 'X (0..63)', bits: 6 });
+    const cntY = add('COUNTER_N', -310, 55, { label: 'Y (0..47)', bits: 6 });
     link(clk, 'out', cntX, 'clk');
     link(hi, 'out', cntX, 'en');
     link(hi, 'out', cntX, 'up');
@@ -386,43 +386,93 @@ export function buildPresetCircuit(key: string): {
     link(hi, 'out', cntY, 'up');
 
     // Sync 48 filas: endFrame = (Y == 47) AND X.co
-    const cmpY = add('COMP_N', -90, 135, { label: 'Y == 47', bits: 6 });
-    const endFrame = add('AND', 35, 135, { label: 'Fin Frame' });
+    const cmpY = add('COMP_N', -160, 140, { label: 'Y == 47', bits: 6 });
+    const endFrame = add('AND', -40, 140, { label: 'Fin Frame' });
     link(cntY, 'q', cmpY, 'a');
     link(c47, 'out', cmpY, 'b');
     link(cmpY, 'eq', endFrame, 'in0');
     link(cntX, 'co', endFrame, 'in1');
     link(endFrame, 'out', cntY, 'rst');
 
-    const cntFrame = add('COUNTER_N', 175, 135, { label: 'Frame #', bits: 8 });
+    const cntFrame = add('COUNTER_N', -40, 235, { label: 'Frame #', bits: 6 });
     link(clk, 'out', cntFrame, 'clk');
     link(endFrame, 'out', cntFrame, 'en');
     link(hi, 'out', cntFrame, 'up');
 
-    // Shader RGB332 vibrante: ((X XOR Y) << 2) + Frame
-    const extX = add('BIT_EXTEND', -95, -120, { label: 'X→8b', bits: 8 });
-    const extY = add('BIT_EXTEND', -95, -20, { label: 'Y→8b', bits: 8 });
-    const opXor = add('CONST_N', -95, 55, { label: 'OP=XOR', bits: 4, initialValue: 4 });
-    const aluXor = add('ALU_N', 45, -75, { label: 'X XOR Y', bits: 8 });
-    link(cntX, 'q', extX, 'in0');
-    link(cntY, 'q', extY, 'in0');
-    link(extX, 'out', aluXor, 'a');
-    link(extY, 'out', aluXor, 'b');
-    link(opXor, 'out', aluXor, 'op');
+    // Dirección 12b (Y[5:0], X[5:0]) -> ROM Polar 3D (6b ángulo | 6b profundidad 1/r | 2b niebla)
+    const xyBus = add('MERGER', -150, -35, { label: 'Addr Y|X', bits: 12, splitWidths: [6, 6] });
+    link(cntX, 'q', xyBus, 'p0');
+    link(cntY, 'q', xyBus, 'p1');
 
-    const sh2 = add('CONST_N', 45, 45, { label: 'SHL 2', bits: 6, initialValue: 2n });
-    const shifter = add('SHIFTER_N', 185, -75, { label: 'Escala RGB', bits: 8 });
-    link(aluXor, 'y', shifter, 'a');
-    link(sh2, 'out', shifter, 'sh');
+    const polarMem: bigint[] = new Array(4096).fill(0n);
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 64; x++) {
+        const dx = x - 31.5;
+        const dy = (y - 23.5) * 1.15;
+        const r = Math.hypot(dx, dy);
+        const depth = Math.min(63, Math.round(148 / Math.max(2.1, r))) & 63;
+        const ang = Math.round(((Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI)) * 64) & 63;
+        const fog = r < 4.5 ? 0 : r < 10 ? 1 : r < 18 ? 2 : 3;
+        polarMem[(y << 6) | x] = BigInt((fog << 12) | (depth << 6) | ang);
+      }
+    }
+    const romPolar = add('ROM_N', -15, -35, {
+      label: 'LUT Polar 3D',
+      bits: 14,
+      addrBits: 12,
+      mem: polarMem
+    });
+    link(xyBus, 'bus', romPolar, 'addr');
 
-    const addCol = add('ADDER_N', 310, -10, { label: 'Color RGB332', bits: 8 });
-    link(shifter, 'y', addCol, 'a');
-    link(cntFrame, 'q', addCol, 'b');
+    const splPolar = add('SPLITTER', 130, -35, { label: 'Ang|Dep|Fog', bits: 14, splitWidths: [6, 6, 2] });
+    link(romPolar, 'q', splPolar, 'bus');
 
-    const vga = add('VGA_SCREEN', 465, -20, { label: 'Pantalla VGA 64×48' });
+    // Rotación suave (ang + frame) y avance infinito (depth + frame)
+    const addU = add('ADDER_N', 270, -110, { label: 'Giro U', bits: 6 });
+    const addV = add('ADDER_N', 270, 5, { label: 'Avance V', bits: 6 });
+    link(splPolar, 'p0', addU, 'a');
+    link(cntFrame, 'q', addU, 'b');
+    link(splPolar, 'p1', addV, 'a');
+    link(cntFrame, 'q', addV, 'b');
+
+    const sliceU = add('BUS_SLICE', 395, -110, { label: 'U[5:3]', bits: 6, sliceHi: 5, sliceLo: 3 });
+    const sliceV = add('BUS_SLICE', 395, 5, { label: 'V[5:3]', bits: 6, sliceHi: 5, sliceLo: 3 });
+    link(addU, 'y', sliceU, 'in0');
+    link(addV, 'y', sliceV, 'in0');
+
+    const palIdx = add('MERGER', 395, 115, { label: 'TexIdx 8b', bits: 8, splitWidths: [3, 3, 2] });
+    link(sliceU, 'out', palIdx, 'p0');
+    link(sliceV, 'out', palIdx, 'p1');
+    link(splPolar, 'p2', palIdx, 'p2');
+
+    const palMem: bigint[] = new Array(256).fill(0n);
+    for (let idx = 0; idx < 256; idx++) {
+      const u3 = idx & 7;
+      const v3 = (idx >> 3) & 7;
+      const fog = (idx >> 6) & 3;
+      const check = ((u3 >> 1) ^ (v3 >> 1)) & 1;
+      const stripe = (u3 ^ v3) & 3;
+      const scale = fog === 0 ? 0.28 : fog === 1 ? 0.5 : fog === 2 ? 0.78 : 1.0;
+      let r = check ? (stripe === 0 ? 7 : 2) : stripe === 2 ? 6 : 1;
+      let g = check ? (stripe === 1 ? 6 : 5) : 1;
+      let b = check ? 3 : stripe === 0 ? 3 : 2;
+      r = Math.max(1, Math.min(7, Math.round(r * scale)));
+      g = Math.max(0, Math.min(7, Math.round(g * scale)));
+      b = Math.max(1, Math.min(3, Math.round(b * scale)));
+      palMem[idx] = BigInt(((r & 7) << 5) | ((g & 7) << 2) | (b & 3));
+    }
+    const romPal = add('ROM_N', 530, 115, {
+      label: 'Shader RGB332',
+      bits: 8,
+      addrBits: 8,
+      mem: palMem
+    });
+    link(palIdx, 'bus', romPal, 'addr');
+
+    const vga = add('VGA_SCREEN', 580, -55, { label: 'Monitor Túnel 3D' });
     link(cntX, 'q', vga, 'x');
     link(cntY, 'q', vga, 'y');
-    link(addCol, 'y', vga, 'col');
+    link(romPal, 'q', vga, 'col');
     link(hi, 'out', vga, 'we');
     link(clk, 'out', vga, 'clk');
     link(endFrame, 'out', vga, 'swap');
@@ -479,7 +529,7 @@ export function buildPresetCircuit(key: string): {
     link(slice8, 'out', mtx, 'r2');
     link(slice8, 'out', mtx, 'r5');
   } else if (key === 'doom_3d') {
-    add('LABEL', 0, -235, { noteText: 'DOOM 3D Raycaster Hardware (WASD / Flechas + Espacio para Disparar)' });
+    add('LABEL', 0, -235, { noteText: 'DOOM 3D Raycaster Hardware (WASD / Flechas · E / J / Enter para Disparar)' });
     const clk = add('CLOCK', -340, -115, { label: 'GPU CLK', freqHz: 15 });
     const pad = add('GAMEPAD', -340, 20, { label: 'Control WASD + Fuego' });
     const rst = add('BUTTON', -340, 155, { label: 'RESET' });

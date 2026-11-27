@@ -2481,17 +2481,34 @@ export function evaluateSequentialEdges(compList: LogicComponent[]): boolean {
           st.animSwap = 0;
           st.animLwe = 0;
           st.animSfxGate = 0;
+          st.animLastScene = -1;
+          st.animLastSubFrame = -1;
           anyChanged = true;
         } else if (risingEdge && bit(pv.pause) === 0) {
+          const SUBFRAME_SEQ = [0, 1, 2, 4, 5, 7];
           const useExt = bit(pv.use_ext) === 1;
           const curScene = useExt ? Number(toUintN(pv.scene, 5)) & 31 : ((st.animScene as number) || 0) & 31;
-          if (useExt) st.animScene = curScene;
+          if (useExt && st.animLastScene !== curScene) {
+            st.animScene = curScene;
+            st.animStep = 0;
+            st.animPx = 0;
+            st.animPy = 0;
+          }
           const curStep = (st.animStep as number) || 0;
-          const subFrame = curStep & 7;
-          const px = (st.animPx as number) || 0;
-          const py = (st.animPy as number) || 0;
+          const subFrame = SUBFRAME_SEQ[curStep % SUBFRAME_SEQ.length];
           const buf = renderFunnyScene32Buffer(curScene, subFrame);
-          const idx = py * 64 + px;
+          const prevSub = typeof st.animLastSubFrame === 'number' ? st.animLastSubFrame : -1;
+          const canDelta = curStep > 0 && st.animLastScene === curScene && prevSub >= 0;
+          const prevBuf = canDelta ? renderFunnyScene32Buffer(curScene, prevSub) : null;
+
+          let idx = ((st.animPy as number) || 0) * 64 + ((st.animPx as number) || 0);
+          if (prevBuf) {
+            while (idx < 3071 && buf[idx] === prevBuf[idx]) {
+              idx++;
+            }
+          }
+          const px = idx & 63;
+          const py = idx >> 6;
 
           st.animOutPx = px;
           st.animOutPy = py;
@@ -2500,7 +2517,7 @@ export function evaluateSequentialEdges(compList: LogicComponent[]): boolean {
           st.animSwap = idx === 3071 ? 1 : 0;
 
           const def = FUNNY_SCENES_32[curScene];
-          if (idx < 32) {
+          if (curStep === 0 && idx < 32) {
             const ch = idx < 16 ? def.line1.charCodeAt(idx) : def.line2.charCodeAt(idx - 16);
             st.animLchar = ch;
             st.animLx = idx & 15;
@@ -2515,19 +2532,20 @@ export function evaluateSequentialEdges(compList: LogicComponent[]): boolean {
           if (idx >= 3071) {
             st.animPx = 0;
             st.animPy = 0;
+            st.animLastScene = curScene;
+            st.animLastSubFrame = subFrame;
             const nextStep = curStep + 1;
-            if (!useExt && nextStep >= 16) {
+            if (!useExt && nextStep >= SUBFRAME_SEQ.length) {
               st.animStep = 0;
               st.animScene = (curScene + 1) & 31;
             } else {
-              st.animStep = nextStep % 16;
+              st.animStep = nextStep % SUBFRAME_SEQ.length;
             }
-            st.animSubFrame = (st.animStep as number) & 7;
-          } else if (px < 63) {
-            st.animPx = px + 1;
+            st.animSubFrame = SUBFRAME_SEQ[(st.animStep as number) % SUBFRAME_SEQ.length];
           } else {
-            st.animPx = 0;
-            st.animPy = py + 1;
+            const nextIdx = idx + 1;
+            st.animPx = nextIdx & 63;
+            st.animPy = nextIdx >> 6;
           }
           anyChanged = true;
         }

@@ -16,12 +16,80 @@ export interface MemProgrammerController {
   bindEvents: () => void;
 }
 
+type MemTab = 'hex' | 'doom' | 'music' | 'guide';
+
+const DOOM_TILE_META: Array<{ id: number; name: string; color: string }> = [
+  { id: 0, name: 'Vacío', color: '#0f172a' },
+  { id: 1, name: 'Ladrillo', color: '#dc2626' },
+  { id: 2, name: 'Piedra Azul', color: '#2563eb' },
+  { id: 3, name: 'Portal', color: '#10b981' },
+  { id: 4, name: 'Metal Oro', color: '#f59e0b' }
+];
+
+const MUSIC_NOTES: Array<{ label: string; hz: number }> = [
+  { label: 'Silencio', hz: 0 },
+  { label: 'Do4 (262)', hz: 262 },
+  { label: 'Re4 (294)', hz: 294 },
+  { label: 'Mi4 (330)', hz: 330 },
+  { label: 'Fa4 (349)', hz: 349 },
+  { label: 'Sol4 (392)', hz: 392 },
+  { label: 'La4 (440)', hz: 440 },
+  { label: 'Si4 (494)', hz: 494 },
+  { label: 'Do5 (523)', hz: 523 },
+  { label: 'Re5 (587)', hz: 587 },
+  { label: 'Mi5 (659)', hz: 659 },
+  { label: 'Sol5 (784)', hz: 784 }
+];
+
+const WAVE_NAMES = ['SQR', 'SAW', 'TRI', 'SIN'];
+
+const RISC_OPCODES = [
+  'NOP', 'LDI', 'ADD', 'SUB', 'AND', 'OR', 'XOR', 'SHL',
+  'SHR', 'CMP', 'JMP', 'JZ', 'JNZ', 'LD', 'ST', 'HALT'
+];
+
 function getEl<T extends HTMLElement = HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
+function rgb332ToCss(v: number): string {
+  const r = ((v >> 5) & 7) * 36;
+  const g = ((v >> 2) & 7) * 36;
+  const b = (v & 3) * 85;
+  return `rgb(${r},${g},${b})`;
+}
+
+export function decodeMusicWord(raw: number): { freq: number; wave: number; gate: number } {
+  return {
+    freq: raw & 0x0fff,
+    wave: (raw >> 12) & 0x3,
+    gate: (raw >> 14) & 0x1
+  };
+}
+
+export function encodeMusicWord(freq: number, wave: number, gate: number): number {
+  return ((gate & 1) << 14) | ((wave & 3) << 12) | (freq & 0x0fff);
+}
+
+export function disassembleRisc16(word: number): string {
+  const op = (word >> 12) & 0xf;
+  const rd = (word >> 9) & 0x7;
+  const ra = (word >> 6) & 0x7;
+  const imm6 = word & 0x3f;
+  const imm9 = word & 0x1ff;
+  const mnem = RISC_OPCODES[op] || `OP${op}`;
+  if (op === 0 || op === 15) return mnem;
+  if (op === 1) return `${mnem} R${rd}, 0x${imm9.toString(16).toUpperCase()}`;
+  if (op >= 10 && op <= 12) return `${mnem} 0x${(word & 0xfff).toString(16).toUpperCase()}`;
+  return `${mnem} R${rd}, R${ra}, #${imm6}`;
+}
+
 export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerController {
   let activeCompId: string | null = null;
+  let activeTab: MemTab = 'hex';
+  let doomBrush = 1;
+  let doomPainting = false;
+  let musicWave = 0;
   let memPage = 0;
   let memPageSize = 64;
   let selectedAddr = 0;
@@ -73,6 +141,128 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
       `Dec: ${u.toString()} | Signo: ${s.toString()} | Bin: ${binShown} | ASCII: ${ascii}`;
   };
 
+  const renderDoomGrid = (comp: LogicComponent): void => {
+    const grid = getEl('mem-doom-grid');
+    if (!grid) return;
+    const { mem, b, size } = ensureMemoryArray(comp);
+    const readAddr = getActiveReadAddr(comp, comp.addrBits || 8, size);
+
+    document.querySelectorAll<HTMLElement>('[data-doomtile]').forEach(btn => {
+      btn.classList.toggle('active', Number(btn.dataset.doomtile) === doomBrush);
+    });
+
+    let html = '';
+    const count = Math.min(256, size);
+    for (let i = 0; i < count; i++) {
+      const tileVal = Number(toUintN(mem[i] as PinSignal, b)) % 5;
+      const meta = DOOM_TILE_META[tileVal] || DOOM_TILE_META[0];
+      const x = i & 15;
+      const y = i >> 4;
+      const cls = ['doom-tile', readAddr === i ? 'reading' : '', selectedAddr === i ? 'selected' : '']
+        .filter(Boolean)
+        .join(' ');
+      html += `<button type="button" class="${cls}" data-didx="${i}" title="(${x},${y}) 0x${i.toString(16).toUpperCase().padStart(2, '0')} = ${meta.name}" style="background:${meta.color};">${tileVal || ''}</button>`;
+    }
+    grid.innerHTML = html;
+
+    const paintCell = (btn: HTMLElement) => {
+      const idx = Number(btn.dataset.didx);
+      mem[idx] = toUintN(BigInt(doomBrush), b);
+      selectedAddr = idx;
+      const meta = DOOM_TILE_META[doomBrush] || DOOM_TILE_META[0];
+      btn.style.background = meta.color;
+      btn.textContent = doomBrush ? String(doomBrush) : '';
+      const coordEl = getEl('mem-doom-coord');
+      if (coordEl) coordEl.textContent = `Celda (${idx & 15}, ${idx >> 4}) = Tile ${doomBrush} (${meta.name})`;
+      updateCellDetail(idx, comp);
+      host.evaluateAndNotify(false);
+    };
+
+    grid.querySelectorAll<HTMLElement>('.doom-tile').forEach(btn => {
+      btn.onpointerdown = e => {
+        e.preventDefault();
+        doomPainting = true;
+        paintCell(btn);
+      };
+      btn.onpointerenter = () => {
+        const idx = Number(btn.dataset.didx);
+        const coordEl = getEl('mem-doom-coord');
+        if (coordEl) {
+          const v = Number(toUintN(mem[idx] as PinSignal, b));
+          coordEl.textContent = `Pos (${idx & 15}, ${idx >> 4}) • 0x${idx.toString(16).toUpperCase().padStart(2, '0')} = ${v}`;
+        }
+        if (doomPainting) paintCell(btn);
+      };
+    });
+  };
+
+  const renderMusicTracker = (comp: LogicComponent): void => {
+    const list = getEl('mem-music-list');
+    if (!list) return;
+    const { mem, ab, b, size } = ensureMemoryArray(comp);
+    const base = Math.max(0, Math.min(size - 16, selectedAddr & ~15));
+    const addrDigits = Math.ceil(ab / 4);
+    const hexDigits = Math.ceil(b / 4);
+    const readAddr = getActiveReadAddr(comp, ab, size);
+
+    let html = '';
+    for (let i = base; i < Math.min(size, base + 16); i++) {
+      const raw = Number(toUintN(mem[i] as PinSignal, b));
+      const { freq, wave, gate } = decodeMusicWord(raw);
+      const isSel = i === selectedAddr;
+      const isReading = i === readAddr;
+      const noteMatch = MUSIC_NOTES.find(n => Math.abs(n.hz - freq) <= 2);
+      const noteTxt = gate === 0 || freq === 0 ? '— Silencio —' : `${noteMatch ? noteMatch.label : `${freq} Hz`} · ${WAVE_NAMES[wave]}`;
+      html += `
+        <button type="button" class="music-step-row ${isSel ? 'selected' : ''} ${isReading ? 'reading' : ''}" data-mstep="${i}">
+          <span class="mono">0x${i.toString(16).toUpperCase().padStart(addrDigits, '0')}</span>
+          <span class="mono" style="color:var(--accent);">0x${raw.toString(16).toUpperCase().padStart(hexDigits, '0')}</span>
+          <span>${noteTxt}</span>
+          <span class="mono" style="font-size:10px; color:var(--text-muted);">${gate ? 'ON' : 'OFF'}</span>
+        </button>`;
+    }
+    list.innerHTML = html;
+
+    list.querySelectorAll<HTMLElement>('[data-mstep]').forEach(btn => {
+      btn.onclick = () => {
+        selectedAddr = Number(btn.dataset.mstep);
+        renderMusicTracker(comp);
+        updateCellDetail(selectedAddr, comp);
+      };
+    });
+  };
+
+  const renderGuideTab = (comp: LogicComponent): void => {
+    const disEl = getEl('mem-guide-disasm');
+    if (!disEl) return;
+    const { mem, ab, b, size } = ensureMemoryArray(comp);
+    const addr = Math.max(0, Math.min(size - 1, selectedAddr));
+    const val = Number(toUintN(mem[addr] as PinSignal, Math.min(32, b)));
+    const lowByte = val & 0xff;
+    const ascii = lowByte >= 32 && lowByte <= 126 ? `'${String.fromCharCode(lowByte)}'` : '(no imprimible)';
+    const music = decodeMusicWord(val);
+    const hexStr = '0x' + toUintN(mem[addr] as PinSignal, b).toString(16).toUpperCase().padStart(Math.ceil(b / 4), '0');
+
+    disEl.innerHTML = `
+      <div class="mem-guide-grid mono">
+        <div><span>Dirección:</span> <strong>0x${addr.toString(16).toUpperCase().padStart(Math.ceil(ab / 4), '0')} (${addr})</strong></div>
+        <div><span>Valor Hex / Dec:</span> <strong>${hexStr} / ${toUintN(mem[addr] as PinSignal, b).toString()}</strong></div>
+        <div><span>Carácter ASCII:</span> <strong>${ascii}</strong></div>
+        <div><span>Color RGB332:</span> <strong style="display:inline-flex;align-items:center;gap:6px;"><i style="display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid #fff;background:${rgb332ToCss(lowByte)};"></i> 0x${lowByte.toString(16).toUpperCase().padStart(2, '0')}</strong></div>
+        <div><span>Word Musical (16b):</span> <strong>${music.gate ? 'ON' : 'OFF'} · ${music.freq}Hz · ${WAVE_NAMES[music.wave]}</strong></div>
+        <div><span>Instr. RISC-16:</span> <strong>${disassembleRisc16(val & 0xffff)}</strong></div>
+      </div>`;
+  };
+
+  const syncTabsUI = (): void => {
+    document.querySelectorAll<HTMLElement>('[data-memtab]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.memtab === activeTab);
+    });
+    (['hex', 'doom', 'music', 'guide'] as MemTab[]).forEach(tab => {
+      getEl(`mem-panel-${tab}`)?.classList.toggle('hidden', activeTab !== tab);
+    });
+  };
+
   const refreshLive = (): void => {
     if (!isOpen()) return;
     const comp = host.getComponent(activeCompId);
@@ -88,7 +278,7 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
       liveEl.textContent = `Lectura actual: ${rTxt} • Última escritura: ${wTxt} • Capacidad: ${size} × ${b}b (${comp.type})`;
     }
     const grid = getEl('mem-hex-grid');
-    if (grid) {
+    if (grid && activeTab === 'hex') {
       grid.querySelectorAll<HTMLElement>('.mem-cell').forEach(cell => {
         const a = Number(cell.dataset.caddr);
         cell.classList.toggle('active-read', readAddr !== null && a === readAddr);
@@ -116,6 +306,8 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
       title.textContent = `Programador ${comp.type}${lbl} (${size} × ${b}b) — Pág. ${memPage + 1}/${totalPages}`;
     }
 
+    syncTabsUI();
+
     const pageInfo = getEl('mem-page-info');
     if (pageInfo) {
       pageInfo.textContent = `0x${start.toString(16).toUpperCase().padStart(addrDigits, '0')}–0x${end.toString(16).toUpperCase().padStart(addrDigits, '0')}`;
@@ -127,51 +319,55 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
     }
 
     const grid = getEl('mem-hex-grid');
-    if (!grid) return;
+    if (grid) {
+      let html = '<div class="mem-hex-table">';
+      for (let i = start; i <= end; i++) {
+        const nVal = toUintN(mem[i] as PinSignal, b);
+        const val = nVal.toString(16).toUpperCase().padStart(hexDigits, '0');
+        const ascii = b === 8 && nVal >= 32n && nVal <= 126n ? ` '${String.fromCharCode(Number(nVal))}'` : '';
+        const classes = [
+          'mem-cell',
+          comp.internalState.lastWrite === i ? 'written' : '',
+          readAddr === i ? 'active-read' : '',
+          selectedAddr === i ? 'selected-cell' : '',
+          matchedAddrs.has(i) ? 'match-cell' : ''
+        ]
+          .filter(Boolean)
+          .join(' ');
+        html += `<label class="${classes}" data-caddr="${i}"><span class="mono">0x${i.toString(16).toUpperCase().padStart(addrDigits, '0')}${ascii}</span><input data-hmaddr="${i}" class="input-control mono" maxlength="${hexDigits}" value="${val}" /></label>`;
+      }
+      html += '</div>';
+      grid.innerHTML = html;
 
-    let html = '<div class="mem-hex-table">';
-    for (let i = start; i <= end; i++) {
-      const nVal = toUintN(mem[i] as PinSignal, b);
-      const val = nVal.toString(16).toUpperCase().padStart(hexDigits, '0');
-      const ascii = b === 8 && nVal >= 32n && nVal <= 126n ? ` '${String.fromCharCode(Number(nVal))}'` : '';
-      const classes = [
-        'mem-cell',
-        comp.internalState.lastWrite === i ? 'written' : '',
-        readAddr === i ? 'active-read' : '',
-        selectedAddr === i ? 'selected-cell' : '',
-        matchedAddrs.has(i) ? 'match-cell' : ''
-      ]
-        .filter(Boolean)
-        .join(' ');
-      html += `<label class="${classes}" data-caddr="${i}"><span class="mono">0x${i.toString(16).toUpperCase().padStart(addrDigits, '0')}${ascii}</span><input data-hmaddr="${i}" class="input-control mono" maxlength="${hexDigits}" value="${val}" /></label>`;
+      grid.querySelectorAll<HTMLInputElement>('[data-hmaddr]').forEach(inp => {
+        inp.onfocus = () => {
+          selectedAddr = Number(inp.dataset.hmaddr);
+          inp.select();
+          refreshLive();
+          updateCellDetail(selectedAddr, comp);
+        };
+        inp.onchange = () => {
+          const addr = Number(inp.dataset.hmaddr);
+          const clean = inp.value.trim().replace(/^0x/i, '');
+          let parsed = 0n;
+          try {
+            parsed = clean ? toUintN(BigInt('0x' + clean), b) : 0n;
+          } catch {
+            parsed = 0n;
+          }
+          mem[addr] = parsed;
+          inp.value = parsed.toString(16).toUpperCase().padStart(hexDigits, '0');
+          selectedAddr = addr;
+          updateCellDetail(addr, comp);
+          host.evaluateAndNotify(true);
+          refreshLive();
+        };
+      });
     }
-    html += '</div>';
-    grid.innerHTML = html;
 
-    grid.querySelectorAll<HTMLInputElement>('[data-hmaddr]').forEach(inp => {
-      inp.onfocus = () => {
-        selectedAddr = Number(inp.dataset.hmaddr);
-        inp.select();
-        refreshLive();
-        updateCellDetail(selectedAddr, comp);
-      };
-      inp.onchange = () => {
-        const addr = Number(inp.dataset.hmaddr);
-        const clean = inp.value.trim().replace(/^0x/i, '');
-        let parsed = 0n;
-        try {
-          parsed = clean ? toUintN(BigInt('0x' + clean), b) : 0n;
-        } catch {
-          parsed = 0n;
-        }
-        mem[addr] = parsed;
-        inp.value = parsed.toString(16).toUpperCase().padStart(hexDigits, '0');
-        selectedAddr = addr;
-        updateCellDetail(addr, comp);
-        host.evaluateAndNotify(true);
-        refreshLive();
-      };
-    });
+    if (activeTab === 'doom') renderDoomGrid(comp);
+    if (activeTab === 'music') renderMusicTracker(comp);
+    if (activeTab === 'guide') renderGuideTab(comp);
 
     const prevBtn = getEl<HTMLButtonElement>('mem-page-prev');
     const nextBtn = getEl<HTMLButtonElement>('mem-page-next');
@@ -184,6 +380,7 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
 
   const open = (comp: LogicComponent): void => {
     activeCompId = comp.id;
+    activeTab = 'hex';
     memPage = 0;
     selectedAddr = 0;
     matchedAddrs.clear();
@@ -319,7 +516,6 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
     const { mem, b, size } = ensureMemoryArray(comp);
     const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-    // Support Intel HEX format if detected
     if (lines.some(l => l.startsWith(':') && l.length >= 11)) {
       let count = 0;
       for (const l of lines) {
@@ -344,7 +540,6 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
       return;
     }
 
-    // Standard hex/CSV/whitespace tokens (supports v2.0 raw or CSV addr,hex)
     const tokens: string[] = [];
     for (const line of lines) {
       if (line.startsWith('#') || line.toLowerCase().startsWith('v2.0') || line.toLowerCase().startsWith('addr,')) continue;
@@ -363,7 +558,7 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
         mem[i] = toUintN(val, b);
         count++;
       } catch {
-        // skip invalid token
+        // skip
       }
     }
     host.evaluateAndNotify(true);
@@ -372,6 +567,69 @@ export function createMemoryProgrammer(host: MemProgrammerHost): MemProgrammerCo
   };
 
   const bindEvents = (): void => {
+    window.addEventListener('pointerup', () => {
+      if (doomPainting) {
+        doomPainting = false;
+        host.evaluateAndNotify(true);
+      }
+    });
+
+    document.querySelectorAll<HTMLElement>('[data-memtab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeTab = (btn.dataset.memtab as MemTab) || 'hex';
+        render();
+      });
+    });
+
+    document.querySelectorAll<HTMLElement>('[data-doomtile]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        doomBrush = Number(btn.dataset.doomtile) || 0;
+        const comp = host.getComponent(activeCompId);
+        if (comp) renderDoomGrid(comp);
+      });
+    });
+
+    getEl('mem-doom-base')?.addEventListener('click', () => applyPattern('doom'));
+    getEl('mem-doom-walls')?.addEventListener('click', () => {
+      const comp = host.getComponent(activeCompId);
+      if (!comp) return;
+      const { mem, b, size } = ensureMemoryArray(comp);
+      for (let y = 0; y < 16; y++) {
+        for (let x = 0; x < 16; x++) {
+          const idx = y * 16 + x;
+          if (idx >= size) break;
+          if (x === 0 || y === 0 || x === 15 || y === 15) mem[idx] = toUintN(1n, b);
+        }
+      }
+      host.evaluateAndNotify(true);
+      render();
+      host.showToast('Bordes cerrados con muro rojo');
+    });
+
+    const musicPalette = getEl('mem-music-notes');
+    if (musicPalette) {
+      musicPalette.innerHTML = MUSIC_NOTES.map(
+        n => `<button type="button" class="btn music-note-btn" data-mhz="${n.hz}">${n.label}</button>`
+      ).join('');
+      musicPalette.querySelectorAll<HTMLElement>('[data-mhz]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const comp = host.getComponent(activeCompId);
+          if (!comp) return;
+          const { mem, b, size } = ensureMemoryArray(comp);
+          const hz = Number(btn.dataset.mhz) || 0;
+          const word = encodeMusicWord(hz, musicWave, hz > 0 ? 1 : 0);
+          mem[selectedAddr] = toUintN(BigInt(word), b);
+          selectedAddr = (selectedAddr + 1) % size;
+          host.evaluateAndNotify(true);
+          render();
+        });
+      });
+    }
+
+    getEl<HTMLSelectElement>('mem-music-wave')?.addEventListener('change', e => {
+      musicWave = Number((e.target as HTMLSelectElement).value) || 0;
+    });
+
     getEl('mem-page-prev')?.addEventListener('click', () => {
       if (memPage > 0) {
         memPage--;

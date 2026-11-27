@@ -15,6 +15,7 @@ import {
   syncComponentPins
 } from '../engine/catalog';
 import { CHALLENGES, ChallengeDef, ChallengeValidationResult, validateChallenge } from '../engine/challenges';
+import { LEARNING_LESSONS, LearningLesson } from '../engine/lessons';
 import {
   LogicScriptDiagnostic,
   compileLogicScript,
@@ -45,10 +46,12 @@ import {
   WorldPin,
   bit,
   deserializeCircuitData,
+  exportLsProData,
   formatSignalHex,
   genId,
   isSignalNonZero,
   maskBits,
+  parseCircuitImport,
   serializeCircuitData,
   toSignedN,
   toUintN
@@ -62,23 +65,41 @@ import {
   RippleFX,
   SparkFX,
   drawComponent,
+  drawComponentGroups,
   drawPinTooltip,
   drawWires,
   evalPointOnWire,
   geomBounds,
   getSignalColor,
+  getWireControlHandle,
   getWireGeometry,
   wireLane
 } from './canvasRenderer';
 import { createMemoryProgrammer } from './memProgrammer';
 import { soundFX } from './sound';
 
-const AUTOSAVE_KEY = 'logicstudio_pro_beta03_autosave';
-const PREFS_KEY = 'logicstudio_pro_beta03_prefs';
-const CHAL_KEY = 'logicstudio_pro_beta03_challenges';
-const SCRIPT_KEY = 'logicstudio_pro_beta03_script';
-const FAVS_KEY = 'logicstudio_pro_beta03_favs';
-const RECENT_KEY = 'logicstudio_pro_beta03_recent';
+const AUTOSAVE_KEY = 'logicstudio_pro_beta04_autosave';
+const LEGACY_AUTOSAVE_KEY = 'logicstudio_pro_beta03_autosave';
+const PREFS_KEY = 'logicstudio_pro_beta04_prefs';
+const LEGACY_PREFS_KEY = 'logicstudio_pro_beta03_prefs';
+const CHAL_KEY = 'logicstudio_pro_beta04_challenges';
+const LEGACY_CHAL_KEY = 'logicstudio_pro_beta03_challenges';
+const SCRIPT_KEY = 'logicstudio_pro_beta04_script';
+const FAVS_KEY = 'logicstudio_pro_beta04_favs';
+const LEGACY_FAVS_KEY = 'logicstudio_pro_beta03_favs';
+const RECENT_KEY = 'logicstudio_pro_beta04_recent';
+const LEGACY_RECENT_KEY = 'logicstudio_pro_beta03_recent';
+const LEARN_KEY = 'logicstudio_pro_beta04_lessons';
+
+function readStorageWithFallback(newKey: string, legacyKey?: string): string | null {
+  try {
+    const v = localStorage.getItem(newKey);
+    if (v !== null) return v;
+    return legacyKey ? localStorage.getItem(legacyKey) : null;
+  } catch {
+    return null;
+  }
+}
 
 export const DEFAULT_SETTINGS: AppSettings = {
   dblclickEdit: false,
@@ -137,8 +158,8 @@ export function initLogicStudio(): () => void {
   let initFavs: string[] = [];
   let initRecents: string[] = [];
   try {
-    initFavs = JSON.parse(localStorage.getItem(FAVS_KEY) || '[]') || [];
-    initRecents = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]') || [];
+    initFavs = JSON.parse(readStorageWithFallback(FAVS_KEY, LEGACY_FAVS_KEY) || '[]') || [];
+    initRecents = JSON.parse(readStorageWithFallback(RECENT_KEY, LEGACY_RECENT_KEY) || '[]') || [];
   } catch {
     initFavs = [];
     initRecents = [];
@@ -184,10 +205,12 @@ export function initLogicStudio(): () => void {
     sparks: [] as SparkFX[],
     snapGuides: [] as Array<{ axis: 'x' | 'y'; pos: number }>,
 
-    mode: 'IDLE' as 'IDLE' | 'PANNING' | 'DRAGGING_COMP' | 'MARQUEE' | 'WIRING',
+    mode: 'IDLE' as 'IDLE' | 'PANNING' | 'DRAGGING_COMP' | 'MARQUEE' | 'WIRING' | 'DRAGGING_WIRE_HANDLE',
     spacePressed: false,
     spaceDidPan: false,
     dragMoved: false,
+    wireDragMoved: false,
+    dragWireHandle: null as { wireId: string; axis: 'x' | 'y'; startOffset: number } | null,
     dragStartWorld: { x: 0, y: 0 },
     dragStartScreen: { x: 0, y: 0 },
     dragInitialPositions: new Map<string, { x: number; y: number }>(),
@@ -438,7 +461,9 @@ export function initLogicStudio(): () => void {
         pinWX(cTo, pTo),
         pinWY(cTo, pTo),
         state.wireStyle,
-        wireLane(cFrom, pFrom.id, compIdx.get(cFrom.id) || 0, state.wireStyle)
+        wireLane(cFrom, pFrom.id, compIdx.get(cFrom.id) || 0, state.wireStyle),
+        w.curveOffset || 0,
+        w.waypoints
       );
       const b = geomBounds(geom);
       if (worldPos.x < b.x0 - tol || worldPos.x > b.x1 + tol || worldPos.y < b.y0 - tol || worldPos.y > b.y1 + tol) {
@@ -447,6 +472,39 @@ export function initLogicStudio(): () => void {
       for (let s = 0; s <= 24; s++) {
         const pt = evalPointOnWire(geom, s / 24);
         if (Math.hypot(pt.x - worldPos.x, pt.y - worldPos.y) <= tol) return w;
+      }
+    }
+    return null;
+  }
+
+  function hitTestWireHandle(worldPos: { x: number; y: number }, tol = 10): { wire: Wire; axis: 'x' | 'y' } | null {
+    const compMap = new Map(state.components.map(c => [c.id, c]));
+    const compIdx = new Map(state.components.map((c, i) => [c.id, i]));
+    const candidateIds = new Set<string>();
+    if (state.selectedWireId) candidateIds.add(state.selectedWireId);
+    if (state.hoveredWire) candidateIds.add(state.hoveredWire.id);
+    for (const wid of candidateIds) {
+      const w = state.wires.find(x => x.id === wid);
+      if (!w) continue;
+      const cFrom = compMap.get(w.fromCompId);
+      const cTo = compMap.get(w.toCompId);
+      if (!cFrom || !cTo) continue;
+      const pFrom = cFrom.pins.find(p => p.id === w.fromPinId);
+      const pTo = cTo.pins.find(p => p.id === w.toPinId);
+      if (!pFrom || !pTo) continue;
+      const geom = getWireGeometry(
+        pinWX(cFrom, pFrom),
+        pinWY(cFrom, pFrom),
+        pinWX(cTo, pTo),
+        pinWY(cTo, pTo),
+        state.wireStyle,
+        wireLane(cFrom, pFrom.id, compIdx.get(cFrom.id) || 0, state.wireStyle),
+        w.curveOffset || 0,
+        w.waypoints
+      );
+      const handle = getWireControlHandle(geom);
+      if (Math.hypot(handle.x - worldPos.x, handle.y - worldPos.y) <= tol) {
+        return { wire: w, axis: handle.axis };
       }
     }
     return null;
@@ -885,6 +943,7 @@ export function initLogicStudio(): () => void {
       snapGuides: state.snapGuides
     };
 
+    drawComponentGroups(ctx, rView);
     drawWires(ctx, rView, SETTINGS, vis, fast);
 
     for (const comp of state.components) {
@@ -1384,10 +1443,19 @@ export function initLogicStudio(): () => void {
 
   function spawnClones(srcComps: LogicComponent[], srcWires: Wire[], offset: number): void {
     const idMap = new Map<string, string>();
+    const groupIdMap = new Map<string, string>();
     const newComps: LogicComponent[] = [];
     for (const orig of srcComps) {
       const clone = deserializeCircuitData<LogicComponent>(serializeCircuitData(orig, false));
       clone.id = genId('c');
+      if (orig.groupId) {
+        let mappedGrp = groupIdMap.get(orig.groupId);
+        if (!mappedGrp) {
+          mappedGrp = genId('grp');
+          groupIdMap.set(orig.groupId, mappedGrp);
+        }
+        clone.groupId = mappedGrp;
+      }
       clone.x += offset;
       clone.y += offset;
       clone.spawnScale = 0.2;
@@ -1408,7 +1476,10 @@ export function initLogicStudio(): () => void {
         toCompId: idMap.get(w.toCompId)!,
         toPinId: w.toPinId,
         signal: 0,
-        width: w.width
+        width: w.width,
+        curveOffset: w.curveOffset,
+        waypoints: w.waypoints ? w.waypoints.map(pt => ({ ...pt })) : undefined,
+        customColor: w.customColor
       }));
     state.components.push(...newComps);
     state.wires.push(...newWires);
@@ -1426,6 +1497,49 @@ export function initLogicStudio(): () => void {
     if (state.selectedIds.size === 0) return;
     const comps = state.components.filter(c => state.selectedIds.has(c.id));
     spawnClones(comps, state.wires, 24);
+  }
+
+  const GROUP_COLORS = ['#00f5d4', '#38bdf8', '#a855f7', '#f59e0b', '#10b981', '#f43f5e'];
+  const WIRE_COLORS = ['#00f5d4', '#38bdf8', '#10b981', '#f59e0b', '#f43f5e', '#a855f7'];
+
+  function groupSelection(customName?: string): void {
+    const comps = state.components.filter(c => state.selectedIds.has(c.id));
+    if (comps.length < 2) {
+      showToast('Selecciona 2 o más componentes para agruparlos', 'warn');
+      return;
+    }
+    const existingGroups = new Set(state.components.map(c => c.groupId).filter(Boolean));
+    const gid = genId('grp');
+    const gname = (customName || `Módulo ${existingGroups.size + 1}`).trim();
+    const gcolor = GROUP_COLORS[existingGroups.size % GROUP_COLORS.length];
+    comps.forEach(c => {
+      c.groupId = gid;
+      c.groupName = gname;
+      c.groupColor = gcolor;
+    });
+    soundFX.playPop(820);
+    saveHistorySnapshot();
+    updateInspector();
+    markDirty(250);
+    showToast(`Grupo "${gname}" creado (${comps.length} elementos)`);
+  }
+
+  function ungroupSelection(): void {
+    const comps = state.components.filter(c => state.selectedIds.has(c.id) && c.groupId);
+    if (comps.length === 0) {
+      showToast('Los elementos seleccionados no pertenecen a ningún grupo', 'warn');
+      return;
+    }
+    comps.forEach(c => {
+      delete c.groupId;
+      delete c.groupName;
+      delete c.groupColor;
+    });
+    soundFX.playClick(false);
+    saveHistorySnapshot();
+    updateInspector();
+    markDirty(250);
+    showToast(`Desagrupados ${comps.length} componente(s)`);
   }
 
   function copySelection(cut = false): void {
@@ -1822,12 +1936,39 @@ export function initLogicStudio(): () => void {
           <div class="insp-id-row"><span>Signo:</span><strong id="insp-wire-sdec">${bases.sdec}</strong></div>
           <div class="insp-id-row"><span>Bin:</span><strong id="insp-wire-bin">${bases.bin}</strong></div>
         </div>
+        <div class="field-group">
+          <label class="field-label">Color Personalizado y Curvatura (${Math.round(w.curveOffset || 0)} px)</label>
+          <div class="color-swatches">
+            <button type="button" class="btn" data-wcol="" style="height:24px; padding:0 8px; font-size:10.5px;">Auto</button>
+            ${WIRE_COLORS.map(
+              col =>
+                `<button type="button" class="swatch-btn ${w.customColor === col ? 'active' : ''}" data-wcol="${col}" style="background:${col};" title="Color ${col}"></button>`
+            ).join('')}
+          </div>
+          <button id="insp-wire-reset" class="btn" style="margin-top:4px;">↺ Resetear Trazado (Doble clic)</button>
+        </div>
         <div class="tool-grid two">
           <button id="insp-wire-zoom" class="btn">🔍 Enfocar</button>
           <button id="insp-wire-tunnel" class="btn">📡 A Túnel</button>
         </div>
         <button id="insp-del-wire" class="btn btn-danger">Eliminar Conductor (Supr)</button>
       `;
+      body.querySelectorAll<HTMLElement>('[data-wcol]').forEach(btn => {
+        btn.onclick = () => {
+          w.customColor = btn.dataset.wcol || undefined;
+          saveHistorySnapshot();
+          updateInspector();
+          markDirty(200);
+        };
+      });
+      $('insp-wire-reset')!.onclick = () => {
+        w.curveOffset = 0;
+        w.waypoints = undefined;
+        saveHistorySnapshot();
+        updateInspector();
+        markDirty(200);
+        showToast('Trazado del cable reiniciado');
+      };
       $('insp-wire-zoom')!.onclick = zoomToSelection;
       $('insp-wire-tunnel')!.onclick = () => convertWireToTunnel(state.selectedWireId!);
       $('insp-del-wire')!.onclick = deleteSelection;
@@ -1858,8 +1999,10 @@ export function initLogicStudio(): () => void {
           </div>
         </div>
         <div class="field-group">
-          <label class="field-label">Acciones de Grupo</label>
+          <label class="field-label">Agrupar y Organización</label>
           <div class="tool-grid two">
+            <button id="insp-group-multi" class="btn btn-accent">⊞ Agrupar (Ctrl+G)</button>
+            <button id="insp-ungroup-multi" class="btn">⊟ Desagrupar</button>
             <button id="insp-zoom-multi" class="btn">🔍 Zoom (Shift+F)</button>
             <button id="insp-tunnels-multi" class="btn">📡 Cables→Túnel</button>
           </div>
@@ -1872,6 +2015,8 @@ export function initLogicStudio(): () => void {
       });
       $('insp-rot-multi')!.onclick = () => rotateSelection(1);
       $('insp-flip-multi')!.onclick = flipSelection;
+      $('insp-group-multi')!.onclick = () => groupSelection();
+      $('insp-ungroup-multi')!.onclick = ungroupSelection;
       $('insp-zoom-multi')!.onclick = zoomToSelection;
       $('insp-tunnels-multi')!.onclick = () => convertLongWiresToTunnels(0, true);
       $('insp-dup-multi')!.onclick = duplicateSelection;
@@ -2207,6 +2352,28 @@ export function initLogicStudio(): () => void {
               .join('')}
           </div>
         </details>
+      `;
+    }
+
+    if (comp.groupId) {
+      const grpColor = comp.groupColor || '#00f5d4';
+      const grpCount = state.components.filter(x => x.groupId === comp.groupId).length;
+      html += `
+        <div class="insp-id-card">
+          <div class="insp-id-row">
+            <span style="font-weight:700; color:${grpColor};">⊞ Grupo (${grpCount} elementos)</span>
+          </div>
+          <input id="insp-group-name" type="text" class="input-control" placeholder="Nombre del grupo" value="${(comp.groupName || 'Bloque').replace(/"/g, '&quot;')}" />
+          <div class="color-swatches">
+            ${GROUP_COLORS.map(
+              gc => `<button type="button" class="swatch-btn ${grpColor === gc ? 'active' : ''}" data-gcol="${gc}" style="background:${gc};" title="Color de grupo"></button>`
+            ).join('')}
+          </div>
+          <div class="tool-grid two">
+            <button id="insp-group-select" class="btn">Seleccionar Grupo</button>
+            <button id="insp-group-remove" class="btn">Sacar del Grupo</button>
+          </div>
+        </div>
       `;
     }
 
@@ -2594,6 +2761,40 @@ export function initLogicStudio(): () => void {
       };
     }
 
+    const grpNameInp = $<HTMLInputElement>('insp-group-name');
+    if (grpNameInp && comp.groupId) {
+      grpNameInp.oninput = () => {
+        const gid = comp.groupId;
+        const val = grpNameInp.value;
+        state.components.forEach(x => {
+          if (x.groupId === gid) x.groupName = val;
+        });
+        markDirty(150);
+      };
+      grpNameInp.onchange = saveHistorySnapshot;
+    }
+    body.querySelectorAll<HTMLElement>('[data-gcol]').forEach(btn => {
+      btn.onclick = () => {
+        const gid = comp.groupId;
+        const gcol = btn.dataset.gcol;
+        if (!gid || !gcol) return;
+        state.components.forEach(x => {
+          if (x.groupId === gid) x.groupColor = gcol;
+        });
+        saveHistorySnapshot();
+        updateInspector();
+        markDirty(200);
+      };
+    });
+    $('insp-group-select')?.addEventListener('click', () => {
+      const gid = comp.groupId;
+      if (!gid) return;
+      state.selectedIds = new Set(state.components.filter(x => x.groupId === gid).map(x => x.id));
+      updateInspector();
+      markDirty(200);
+    });
+    $('insp-group-remove')?.addEventListener('click', ungroupSelection);
+
     $('insp-dup')!.onclick = duplicateSelection;
     $('insp-del')!.onclick = deleteSelection;
   }
@@ -2788,6 +2989,20 @@ export function initLogicStudio(): () => void {
         items.push({ label: 'Abrir Editor Hexadecimal', action: () => openMemoryEditor(compHit) });
       }
       items.push({ label: 'Duplicar selección (Ctrl+D)', action: duplicateSelection });
+      if (state.selectedIds.size >= 2) {
+        items.push({ label: '⊞ Agrupar selección (Ctrl+G)', action: () => groupSelection() });
+      }
+      if (compHit.groupId) {
+        items.push({
+          label: 'Seleccionar grupo entero',
+          action: () => {
+            state.selectedIds = new Set(state.components.filter(x => x.groupId === compHit.groupId).map(x => x.id));
+            updateInspector();
+            markDirty(200);
+          }
+        });
+        items.push({ label: '⊟ Sacar del grupo (Ctrl+Shift+G)', action: ungroupSelection });
+      }
       if (compHit.type !== 'LABEL') {
         items.push({ label: 'Rotar 90° (R)', action: () => rotateSelection(1) });
         items.push({ label: 'Voltear (H)', action: flipSelection });
@@ -2806,6 +3021,17 @@ export function initLogicStudio(): () => void {
       state.selectedIds.clear();
       state.selectedWireId = wireHit.id;
       updateInspector();
+      items.push({
+        label: '↺ Resetear curvatura del cable',
+        action: () => {
+          wireHit.curveOffset = 0;
+          wireHit.waypoints = undefined;
+          saveHistorySnapshot();
+          updateInspector();
+          markDirty(200);
+          showToast('Trazado del cable reiniciado');
+        }
+      });
       items.push({ label: 'Convertir cable en Túnel inalámbrico', action: () => convertWireToTunnel(wireHit.id) });
       items.push({ label: 'Cambiar estilo Bézier / Ortogonal', action: () => $('btn-wire-style')?.click() });
       items.push({ label: 'Eliminar conductor (Supr)', danger: true, action: deleteSelection });
@@ -2840,6 +3066,9 @@ export function initLogicStudio(): () => void {
     if (!list) return;
     const query = q.trim().toLowerCase();
     const entries = [
+      { tag: 'ACCIÓN', label: 'Abrir Modo Aprendizaje desde 0', run: openLearnModal },
+      { tag: 'ACCIÓN', label: 'Agrupar componentes seleccionados (Ctrl+G)', run: () => groupSelection() },
+      { tag: 'ACCIÓN', label: 'Desagrupar componentes seleccionados (Ctrl+Shift+G)', run: ungroupSelection },
       { tag: 'ACCIÓN', label: 'Sintetizador Booleano ƒ(x)', run: () => $('bool-synth-modal')?.classList.remove('hidden') },
       { tag: 'ACCIÓN', label: 'Generar Tabla de Verdad Automática', run: openTruthTableModal },
       { tag: 'ACCIÓN', label: 'Empaquetar Circuito como Chip IC', run: openCustomICModal },
@@ -2927,7 +3156,7 @@ export function initLogicStudio(): () => void {
   // =========================================================================
   let chalDone: Record<string, boolean> = {};
   try {
-    chalDone = JSON.parse(localStorage.getItem(CHAL_KEY) || '{}') || {};
+    chalDone = JSON.parse(readStorageWithFallback(CHAL_KEY, LEGACY_CHAL_KEY) || '{}') || {};
   } catch {
     chalDone = {};
   }
@@ -2968,6 +3197,7 @@ export function initLogicStudio(): () => void {
     const bar = $('challenge-bar');
     if (!bar) return;
     bar.classList.toggle('hidden', !activeChal);
+    document.body.classList.toggle('challenge-active', Boolean(activeChal));
     if (!activeChal) return;
     $('chal-bar-title')!.textContent = activeChal.title;
     const st = $('chal-bar-status')!;
@@ -3038,6 +3268,7 @@ export function initLogicStudio(): () => void {
       <div class="chal-detail">
         <strong style="font-size:13px;">${ch.title}</strong>
         <p style="font-size:12px; color:var(--text-secondary);">${ch.desc}</p>
+        ${ch.hint ? `<div class="chal-hint-box">💡 <strong>Pista:</strong> ${ch.hint}</div>` : ''}
         <div class="chal-io"><span>Entradas:</span>${ch.inputs.map(n => `<span class="chal-pill in">${n}</span>`).join('')}<span style="margin-left:8px;">Salidas:</span>${ch.outputs.map(n => `<span class="chal-pill out">${n}</span>`).join('')}</div>
         ${ch.steps ? '<p style="font-size:11px; color:var(--text-muted);">Conecta el interruptor CLK a los relojes de tus flip-flops: se pulsa solo al validar.</p>' : ''}
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -3528,15 +3759,20 @@ export function initLogicStudio(): () => void {
     reader.onload = ev => {
       try {
         const text = String(ev.target?.result || '');
-        const parsed = deserializeCircuitData<{ components?: LogicComponent[]; wires?: Wire[] }>(text);
-        if (!Array.isArray(parsed.components)) throw new Error('Formato inválido');
-        if (!Array.isArray(parsed.wires)) parsed.wires = [];
-        restoreSnapshot(text);
+        const parsed = parseCircuitImport(text);
+        state.components = parsed.components;
+        state.wires = parsed.wires;
+        state.customICs = parsed.customICs;
+        state.selectedIds.clear();
+        state.selectedWireId = null;
+        evaluateCircuitDeterministic(state.components, state.wires, 0, state.globalClockHz, state.customICs);
+        renderComponentLibrary();
+        updateInspector();
         saveHistorySnapshot();
         centerAndFitView();
-        showToast('Circuito JSON cargado');
+        showToast(parsed.format === 'lspro' ? `Proyecto .lspro (v${parsed.version}) cargado` : 'Circuito JSON cargado');
       } catch {
-        showToast('No se pudo leer el archivo JSON', 'warn');
+        showToast('No se pudo leer el archivo (.lspro / .json)', 'warn');
       }
     };
     reader.onerror = () => showToast('Error leyendo el archivo', 'warn');
@@ -3673,7 +3909,7 @@ export function initLogicStudio(): () => void {
     on(canvasWrap, 'drop', (e: DragEvent) => {
       e.preventDefault();
       const dropped = e.dataTransfer?.files?.[0];
-      if (dropped && /\.json$/i.test(dropped.name)) {
+      if (dropped && /\.(lspro|json)$/i.test(dropped.name)) {
         loadJsonFile(dropped);
         return;
       }
@@ -3726,6 +3962,23 @@ export function initLogicStudio(): () => void {
         state.mode = 'WIRING';
         state.wiringFrom = { compId: pinHit.comp.id, pinId: pinHit.pinId, dir: pinHit.dir };
         state.mouseWorld = wPos;
+        return;
+      }
+
+      const handleHit = hitTestWireHandle(wPos, 11 / state.view.zoom);
+      if (handleHit) {
+        state.selectedIds.clear();
+        state.selectedWireId = handleHit.wire.id;
+        state.mode = 'DRAGGING_WIRE_HANDLE';
+        state.wireDragMoved = false;
+        state.dragWireHandle = {
+          wireId: handleHit.wire.id,
+          axis: handleHit.axis,
+          startOffset: handleHit.wire.curveOffset || 0
+        };
+        mainCanvas.style.cursor = handleHit.axis === 'x' ? 'ew-resize' : 'ns-resize';
+        updateInspector();
+        markDirty(150);
         return;
       }
 
@@ -3864,6 +4117,23 @@ export function initLogicStudio(): () => void {
         state.view.y += sy - state.dragStartScreen.y;
         state.dragStartScreen = { x: sx, y: sy };
         markDirty(150);
+        return;
+      }
+
+      if (state.mode === 'DRAGGING_WIRE_HANDLE' && state.dragWireHandle) {
+        const w = state.wires.find(x => x.id === state.dragWireHandle!.wireId);
+        if (w) {
+          const delta =
+            state.dragWireHandle.axis === 'x'
+              ? wPos.x - state.dragStartWorld.x
+              : wPos.y - state.dragStartWorld.y;
+          let raw = state.dragWireHandle.startOffset + delta;
+          if (!e.shiftKey) raw = Math.round(raw / 5) * 5;
+          raw = Math.max(-360, Math.min(360, raw));
+          if (raw !== (w.curveOffset || 0)) state.wireDragMoved = true;
+          w.curveOffset = raw;
+          markDirty(150);
+        }
         return;
       }
 
@@ -4030,6 +4300,12 @@ export function initLogicStudio(): () => void {
             saveHistorySnapshot();
           }
         }
+      } else if (state.mode === 'DRAGGING_WIRE_HANDLE') {
+        state.dragWireHandle = null;
+        if (state.wireDragMoved) {
+          saveHistorySnapshot();
+          updateInspector();
+        }
       } else if (state.mode === 'DRAGGING_COMP') {
         if (state.dragMoved) {
           saveHistorySnapshot();
@@ -4136,11 +4412,23 @@ export function initLogicStudio(): () => void {
       'SLIDER_ADC'
     ]);
     on(mainCanvas, 'dblclick', (e: MouseEvent) => {
-      if (!SETTINGS.dblclickEdit) return;
       const rect = mainCanvas.getBoundingClientRect();
-      const compHit = hitTestComponent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
-      if (compHit && !INTERACTIVE_SKIP_DBLCLICK.has(compHit.type)) {
-        openInlineEditor(compHit);
+      const wPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      const compHit = hitTestComponent(wPos);
+      if (compHit) {
+        if (SETTINGS.dblclickEdit && !INTERACTIVE_SKIP_DBLCLICK.has(compHit.type)) {
+          openInlineEditor(compHit);
+        }
+        return;
+      }
+      const wireHit = hitTestWire(wPos, 9 / state.view.zoom);
+      if (wireHit) {
+        wireHit.curveOffset = 0;
+        wireHit.waypoints = undefined;
+        saveHistorySnapshot();
+        updateInspector();
+        markDirty(200);
+        showToast('Trazado del cable reiniciado');
       }
     });
 
@@ -4342,23 +4630,29 @@ export function initLogicStudio(): () => void {
     $('btn-cmd-palette')!.onclick = openCommandPalette;
     $<HTMLInputElement>('cmd-palette-input')!.oninput = e => renderCommandPaletteList((e.target as HTMLInputElement).value);
 
+    $('btn-group')?.addEventListener('click', () => {
+      if (state.selectedIds.size >= 2) {
+        groupSelection();
+      } else if ([...state.selectedIds].some(id => state.components.find(c => c.id === id)?.groupId)) {
+        ungroupSelection();
+      } else {
+        showToast('Selecciona 2 o más componentes para agruparlos (Ctrl+G)', 'warn');
+      }
+    });
+
     $('btn-save-json')!.onclick = () => {
-      const payload = serializeCircuitData(
-        {
-          app: 'LogicStudio Pro Beta 0.3',
-          author: 'Alejandro Arbós Gómez',
-          components: state.components,
-          wires: state.wires,
-          customICs: state.customICs
-        },
-        false
-      );
+      const payload = exportLsProData({
+        author: 'Alejandro Arbós Gómez',
+        components: state.components,
+        wires: state.wires,
+        customICs: state.customICs
+      });
       const blob = new Blob([payload], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'circuito_logicstudio_beta03.json';
+      a.download = 'circuito_logicstudio_beta04.lspro';
       a.click();
-      showToast('Circuito guardado en JSON');
+      showToast('Proyecto guardado (.lspro)');
     };
 
     $('btn-load-json')!.onclick = () => $('file-json-input')?.click();
@@ -4372,7 +4666,7 @@ export function initLogicStudio(): () => void {
     $('btn-export-png')!.onclick = () => {
       const a = document.createElement('a');
       a.href = mainCanvas.toDataURL('image/png');
-      a.download = 'logicstudio_pro_beta03.png';
+      a.download = 'logicstudio_pro_beta04.png';
       a.click();
       showToast('Captura PNG exportada');
     };
@@ -4424,7 +4718,7 @@ export function initLogicStudio(): () => void {
     $('btn-zoom-fit')!.onclick = centerAndFitView;
     $('btn-zoom-sel')?.addEventListener('click', zoomToSelection);
 
-    // Teclado global + Gamepad WASD/Fuego + Keyboard ASCII
+    // Teclado global + Gamepad WASD/Fuego (E / J / Enter, F queda libre para ajustar vista) + Keyboard ASCII
     const gamepadKeyMap: Record<string, number> = {
       w: 1,
       arrowup: 1,
@@ -4435,7 +4729,8 @@ export function initLogicStudio(): () => void {
       d: 8,
       arrowright: 8,
       enter: 16,
-      j: 16
+      j: 16,
+      e: 16
     };
 
     on(window, 'keydown', (e: KeyboardEvent) => {
@@ -4562,6 +4857,12 @@ export function initLogicStudio(): () => void {
         duplicateSelection();
         return;
       }
+      if (mod && kLow === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) ungroupSelection();
+        else groupSelection();
+        return;
+      }
       if (mod && kLow === 'a') {
         e.preventDefault();
         state.selectedIds = new Set(state.components.map(c => c.id));
@@ -4577,14 +4878,6 @@ export function initLogicStudio(): () => void {
       if (kLow === 'f' && !mod && !e.altKey) {
         if (e.shiftKey) {
           zoomToSelection();
-          return;
-        }
-        if (gpChips.length > 0 && state.components.some(c => c.type === 'RAYCAST_CORE')) {
-          // On DOOM circuit, F also fires! Use button or shift+F to fit.
-          gpChips.forEach(gp => {
-            gp.internalState.gamepadBits = (gp.internalState.gamepadBits || 0) | 16;
-          });
-          evaluateCircuitDeterministic(state.components, state.wires, 0, state.globalClockHz, state.customICs);
           return;
         }
         centerAndFitView();
@@ -4608,7 +4901,7 @@ export function initLogicStudio(): () => void {
       const kLow = e.key.toLowerCase();
       const gpChips = state.components.filter(c => c.type === 'GAMEPAD');
       if (gpChips.length > 0) {
-        const mask = kLow === 'f' ? 16 : gamepadKeyMap[kLow] || 0;
+        const mask = gamepadKeyMap[kLow] || 0;
         if (mask) {
           gpChips.forEach(gp => {
             gp.internalState.gamepadBits = (gp.internalState.gamepadBits || 0) & ~mask;
@@ -4635,6 +4928,132 @@ export function initLogicStudio(): () => void {
   // =========================================================================
   initSettingsUI();
   initScriptUI();
+
+  // =========================================================================
+  // MODO APRENDIZAJE DESDE 0
+  // =========================================================================
+  let learnDone: Record<string, boolean> = {};
+  try {
+    learnDone = JSON.parse(readStorageWithFallback(LEARN_KEY) || '{}') || {};
+  } catch {
+    learnDone = {};
+  }
+  let activeLesson: LearningLesson = LEARNING_LESSONS[0];
+  let lessonResult: { ok: boolean; feedback: string } | null = null;
+
+  function renderLearnModal(): void {
+    const doneCount = LEARNING_LESSONS.filter(l => learnDone[l.id]).length;
+    const pText = $('learn-progress-text');
+    const pFill = $('learn-progress-fill') as HTMLElement | null;
+    if (pText) pText.textContent = `${doneCount}/${LEARNING_LESSONS.length}`;
+    if (pFill) pFill.style.width = `${(doneCount / LEARNING_LESSONS.length) * 100}%`;
+
+    const listEl = $('learn-list');
+    if (listEl) {
+      listEl.innerHTML = LEARNING_LESSONS.map(
+        l => `
+        <button type="button" class="learn-step-btn ${learnDone[l.id] ? 'done' : ''} ${activeLesson.id === l.id ? 'active' : ''}" data-lid="${l.id}">
+          <span class="learn-step-num">${learnDone[l.id] ? '✓' : l.num}</span>
+          <span style="display:flex; flex-direction:column; gap:1px; min-width:0;">
+            <strong style="font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${l.title}</strong>
+            <span style="font-size:10px; color:var(--text-muted);">${l.level}</span>
+          </span>
+        </button>`
+      ).join('');
+      listEl.querySelectorAll<HTMLElement>('[data-lid]').forEach(btn => {
+        btn.onclick = () => {
+          const found = LEARNING_LESSONS.find(x => x.id === btn.dataset.lid);
+          if (found) {
+            activeLesson = found;
+            lessonResult = null;
+            renderLearnModal();
+          }
+        };
+      });
+    }
+
+    const detEl = $('learn-detail');
+    if (detEl) {
+      const idx = LEARNING_LESSONS.findIndex(x => x.id === activeLesson.id);
+      const nextLesson = idx >= 0 && idx + 1 < LEARNING_LESSONS.length ? LEARNING_LESSONS[idx + 1] : null;
+      detEl.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <strong style="font-size:14.5px; color:var(--text-primary);">Lección ${activeLesson.num}: ${activeLesson.title}</strong>
+          <span class="beta-badge">${activeLesson.level}</span>
+        </div>
+        <p style="font-size:12px; color:var(--text-secondary);">${activeLesson.summary}</p>
+        <div class="learn-theory">
+          ${activeLesson.theory.map(p => `<p style="margin:0 0 6px 0;">• ${p}</p>`).join('')}
+        </div>
+        <div class="learn-goal-box">
+          <strong>🎯 Objetivo práctico:</strong> ${activeLesson.goalText}
+        </div>
+        <div class="learn-tip-box">
+          💡 <strong>Pista:</strong> ${activeLesson.tip}
+        </div>
+        ${
+          lessonResult
+            ? `<div class="learn-status-banner ${lessonResult.ok ? 'ok' : 'bad'}">${lessonResult.ok ? '✔ ' : '✖ '}${lessonResult.feedback}</div>`
+            : ''
+        }
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:auto;">
+          <button type="button" id="learn-load-starter" class="btn">📂 Cargar Plantilla</button>
+          <button type="button" id="learn-check-btn" class="btn btn-accent">✓ Comprobar Lección</button>
+          <button type="button" id="learn-go-canvas" class="btn">Ir al Lienzo</button>
+          ${nextLesson ? `<button type="button" id="learn-next-btn" class="btn">Siguiente (${nextLesson.num}) →</button>` : ''}
+        </div>
+      `;
+      $('learn-load-starter')!.onclick = () => {
+        const built = activeLesson.buildStarter();
+        state.components = built.components;
+        state.wires = built.wires;
+        state.analyzerSamples = [];
+        state.selectedIds.clear();
+        state.selectedWireId = null;
+        evaluateCircuitDeterministic(state.components, state.wires, 0, state.globalClockHz, state.customICs);
+        saveHistorySnapshot();
+        centerAndFitView();
+        updateInspector();
+        markDirty(300);
+        lessonResult = null;
+        $('learn-modal')?.classList.add('hidden');
+        soundFX.playPop(780);
+        showToast(`Plantilla cargada: Lección ${activeLesson.num}`);
+      };
+      $('learn-check-btn')!.onclick = () => {
+        evaluateCircuitDeterministic(state.components, state.wires, 0, state.globalClockHz, state.customICs);
+        lessonResult = activeLesson.check(state.components, state.wires);
+        if (lessonResult.ok) {
+          learnDone[activeLesson.id] = true;
+          try {
+            localStorage.setItem(LEARN_KEY, JSON.stringify(learnDone));
+          } catch {
+            // ignore
+          }
+          soundFX.playPop(980);
+        } else {
+          soundFX.playClick(false);
+        }
+        renderLearnModal();
+      };
+      $('learn-go-canvas')!.onclick = () => $('learn-modal')?.classList.add('hidden');
+      $('learn-next-btn')?.addEventListener('click', () => {
+        if (nextLesson) {
+          activeLesson = nextLesson;
+          lessonResult = null;
+          renderLearnModal();
+        }
+      });
+    }
+  }
+
+  function openLearnModal(): void {
+    lessonResult = null;
+    renderLearnModal();
+    $('learn-modal')?.classList.remove('hidden');
+  }
+
+  $('btn-learn')?.addEventListener('click', openLearnModal);
 
   $('btn-challenges')!.onclick = () => {
     renderChallengeList();
@@ -4722,7 +5141,7 @@ export function initLogicStudio(): () => void {
   // Cargar preferencias desde localStorage
   let loadedPrefs = false;
   try {
-    const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    const prefs = JSON.parse(readStorageWithFallback(PREFS_KEY, LEGACY_PREFS_KEY) || 'null');
     if (prefs) {
       loadedPrefs = true;
       if (['cyber', 'blueprint', 'clean'].includes(prefs.theme)) {
@@ -4771,7 +5190,7 @@ export function initLogicStudio(): () => void {
 
   loadPresetCircuit('demo');
   try {
-    const saved = localStorage.getItem(AUTOSAVE_KEY);
+    const saved = readStorageWithFallback(AUTOSAVE_KEY, LEGACY_AUTOSAVE_KEY);
     if (saved) {
       const parsed = deserializeCircuitData<{ components?: LogicComponent[] }>(saved);
       if (parsed && Array.isArray(parsed.components) && parsed.components.length > 0) {

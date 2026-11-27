@@ -226,6 +226,9 @@ export interface CreateComponentOptions {
   sliceLo?: number;
   signedMode?: boolean;
   modBase?: number;
+  groupId?: string;
+  groupName?: string;
+  groupColor?: string;
   color?: string;
   freqHz?: number | null;
   buzzerHz?: number;
@@ -261,6 +264,9 @@ export function createComponent(type: string, x: number, y: number, options: Cre
     sliceLo: options.sliceLo ?? 0,
     signedMode: options.signedMode || false,
     modBase: options.modBase ?? (type === 'WATCHDOG_N' ? 16 : 10),
+    groupId: options.groupId,
+    groupName: options.groupName,
+    groupColor: options.groupColor,
     label: options.label !== undefined ? options.label : '',
     noteText: options.noteText || 'Nota del circuito',
     inputCount: options.inputCount || 2,
