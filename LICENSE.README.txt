@@ -1,0 +1,5 @@
+Para completar la licencia, descarga el texto legal oficial de CC BY-NC-SA 4.0 y guárdalo como LICENSE:
+
+  curl -o LICENSE https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.txt
+
+(Borra este archivo después.)
